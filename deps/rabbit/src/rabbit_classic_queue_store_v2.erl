@@ -120,7 +120,8 @@ init(#resource{ virtual_host = VHost } = Name) ->
     ?DEBUG("~0p", [Name]),
     VHostDir = rabbit_vhost:msg_store_dir_path(VHost),
     Dir = rabbit_classic_queue_index_v2:queue_dir(VHostDir, Name),
-    #qs{dir = rabbit_file:filename_to_binary(Dir)}.
+    DirBin = rabbit_file:filename_to_binary(Dir),
+    #qs{dir = << DirBin/binary, "/" >>}.
 
 -spec terminate(State) -> State when State::state().
 
