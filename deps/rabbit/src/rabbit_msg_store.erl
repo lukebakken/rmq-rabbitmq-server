@@ -1997,7 +1997,7 @@ delete_file(File, State = #gc_state { file_summary_ets = FileSummaryEts,
             ok
     end.
 
-scan_and_vacuum_message_file(File, State = #gc_state{ dir = Dir }) ->
+scan_and_vacuum_message_file(File, State = #gc_state { dir = Dir }) ->
     %% Messages here will be end-of-file at start-of-list
     {ok, Messages, _FileSize} =
         scan_file_for_valid_messages(Dir, filenum_to_name(File)),
