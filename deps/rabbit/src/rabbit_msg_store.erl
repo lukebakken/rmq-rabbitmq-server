@@ -1396,7 +1396,7 @@ scan_file_for_valid_messages(Path) ->
         {ok, Fd} ->
             {ok, FileSize} = file:position(Fd, eof),
             {ok, _} = file:position(Fd, bof),
-            Messages = scan(<<>>, Fd, 0, FileSize, #{}, [], ?SCAN_BLOCK_SIZE),
+            Messages = scan(<<>>, Fd, 0, FileSize, #{}, []),
             ok = file:close(Fd),
             case Messages of
                 [] ->
@@ -1412,8 +1412,8 @@ scan_file_for_valid_messages(Path) ->
                      Reason}}
     end.
 
-scan(Buffer, Fd, Offset, FileSize, MsgIdsFound, Acc, ScanSize) ->
-    case file:read(Fd, ScanSize) of
+scan(Buffer, Fd, Offset, FileSize, MsgIdsFound, Acc) ->
+    case file:read(Fd, ?SCAN_BLOCK_SIZE) of
         eof ->
             Acc;
         {ok, Data0} ->
@@ -1448,12 +1448,10 @@ scan_data(<<Size:64, MsgIdAndMsg:Size/binary, 255, Rest/bits>> = Data,
 %% This might be the start of a message.
 scan_data(<<Size:64, Rest/bits>> = Data, Fd, Offset, FileSize, MsgIdsFound, Acc)
           when byte_size(Rest) < Size + 1, Size < FileSize - Offset ->
-    RemainingMsgSize = Size - byte_size(Rest),
-    ScanSize = max(?SCAN_BLOCK_SIZE, RemainingMsgSize + 1),
-    scan(Data, Fd, Offset, FileSize, MsgIdsFound, Acc, ScanSize);
+    scan(Data, Fd, Offset, FileSize, MsgIdsFound, Acc);
 scan_data(Data, Fd, Offset, FileSize, MsgIdsFound, Acc)
           when byte_size(Data) < 8 ->
-    scan(Data, Fd, Offset, FileSize, MsgIdsFound, Acc, ?SCAN_BLOCK_SIZE);
+    scan(Data, Fd, Offset, FileSize, MsgIdsFound, Acc);
 %% This is definitely not a message. Try the next byte.
 scan_data(<<_, Rest/bits>>, Fd, Offset, FileSize, MsgIdsFound, Acc) ->
     scan_data(Rest, Fd, Offset + 1, FileSize, MsgIdsFound, Acc).
