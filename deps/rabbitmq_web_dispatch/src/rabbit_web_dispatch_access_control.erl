@@ -143,6 +143,7 @@ is_authorized(ReqData, Context, Username, Password, ErrorMsg, Fun, AuthConfig, R
         _                           -> []
     end,
 
+    {IP, _} = cowboy_req:peer(ReqData),
 	{ok, AuthBackends} = get_auth_backends(),
 
     case rabbit_access_control:check_user_login(Username, AuthProps, AuthBackends) of
