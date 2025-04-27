@@ -143,6 +143,7 @@ RABBITMQ_COMPONENTS = amqp_client \
 		      rabbitmq_auth_backend_amqp \
 		      rabbitmq_auth_backend_cache \
 		      rabbitmq_auth_backend_http \
+	          rabbitmq_auth_backend_internal_loopback \
 		      rabbitmq_auth_backend_ldap \
 		      rabbitmq_auth_backend_oauth2 \
 		      rabbitmq_auth_mechanism_ssl \
