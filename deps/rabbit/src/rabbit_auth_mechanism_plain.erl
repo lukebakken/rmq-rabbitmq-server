@@ -12,6 +12,10 @@
 
 -export([description/0, should_offer/1, init/1, handle_response/2]).
 
+-record(state, {
+          socket
+         }).
+
 -rabbit_boot_step({?MODULE,
                    [{description, "auth mechanism plain"},
                     {mfa,         {rabbit_registry, register,
@@ -28,8 +32,17 @@ description() ->
 should_offer(_Sock) ->
     true.
 
-init(_Sock) ->
-    [].
+init(Sock) ->
+    #state{socket = Sock}.
+
+handle_response(Response, #state{socket = Socket}) ->
+    case extract_user_pass(Response) of
+        {ok, User, Pass} ->
+            AuthProps = build_auth_props(Pass, Socket),
+            rabbit_access_control:check_user_login(User, AuthProps);
+        error ->
+            {protocol_error, "response ~tp invalid", [Response]}
+    end;
 
 handle_response(Response, _State) ->
     case extract_user_pass(Response) of
@@ -38,6 +51,10 @@ handle_response(Response, _State) ->
         error ->
             {protocol_error, "response ~tp invalid", [Response]}
     end.
+
+
+build_auth_props(Pass, Socket) ->
+    [{password, Pass}, {sockOrAddr, Socket}].
 
 extract_user_pass(Response) ->
     case extract_elem(Response) of

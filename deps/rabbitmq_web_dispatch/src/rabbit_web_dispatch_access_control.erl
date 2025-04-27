@@ -136,12 +136,16 @@ is_authorized(ReqData, Context, Username, Password, ErrorMsg, Fun, AuthConfig, R
                        false -> {false, ReqData, "Not_Authorized"}
                      end
              end,
-    AuthProps = [{password, Password}] ++ case vhost(ReqData) of
+    {IP, _} = cowboy_req:peer(ReqData),
+
+    AuthProps = [{password, Password}, {sockOrAddr, IP}] ++ case vhost(ReqData) of
         VHost when is_binary(VHost) -> [{vhost, VHost}];
         _                           -> []
     end,
-    {IP, _} = cowboy_req:peer(ReqData),
-    case rabbit_access_control:check_user_login(Username, AuthProps) of
+
+	{ok, AuthBackends} = get_auth_backends(),
+
+    case rabbit_access_control:check_user_login(Username, AuthProps, AuthBackends) of
         {ok, User = #user{username = ResolvedUsername, tags = Tags}} ->
             case rabbit_access_control:check_user_loopback(ResolvedUsername, IP) of
                 ok ->
