@@ -1904,7 +1904,8 @@ forget_all_durable(Node) ->
     FilterFun = fun(Q) ->
                         is_local_to_node(amqqueue:get_pid(Q), Node)
                 end,
-    rabbit_db_queue:foreach_durable(UpdateFun, FilterFun).
+    ok = rabbit_db_queue:foreach_durable(UpdateFun, FilterFun),
+    ok = update_recoverable_slaves(Node).
 
 %% Try to promote a mirror while down - it should recover as a
 %% leader. We try to take the oldest mirror here for best chance of
@@ -1930,17 +1931,15 @@ forget_node_for_queue(_DeadNode, [], Q) ->
 forget_node_for_queue(DeadNode, [DeadNode | T], Q) ->
     forget_node_for_queue(DeadNode, T, Q);
 
-forget_node_for_queue(DeadNode, [H|T], Q) when ?is_amqqueue(Q) ->
-    Type = amqqueue:get_type(Q),
+forget_node_for_queue(DeadNode, [H|T]=RS0, Q0) when ?is_amqqueue(Q0) ->
+    Type = amqqueue:get_type(Q0),
     case {node_permits_offline_promotion(H), Type} of
-        {false, _} -> forget_node_for_queue(DeadNode, T, Q);
+        {false, _} -> forget_node_for_queue(DeadNode, T, Q0);
         {true, rabbit_classic_queue} ->
-            Q1 = amqqueue:set_pid(Q, rabbit_misc:node_to_fake_pid(H)),
-            %% rabbit_db_queue:set_many/1 just stores a durable queue record,
-            %% that is the only one required here.
-            %% rabbit_db_queue:set/1 writes both durable and transient, thus
-            %% can't be used for this operation.
-            ok = rabbit_db_queue:set_many([Q1]);
+            Q1 = amqqueue:set_pid(Q0, rabbit_misc:node_to_fake_pid(H)),
+            Q2 = remove_recoverable_slave_from_queue(Q1, DeadNode, RS0),
+            ok = rabbit_db_queue:set_transient_no_tx(Q2),
+            ok = rabbit_db_queue:set_durable_no_tx(Q2);
         {true, rabbit_quorum_queue} ->
             ok
     end.
@@ -1951,6 +1950,33 @@ node_permits_offline_promotion(Node) ->
         _    -> NotRunning = rabbit_nodes:list_not_running(),
                 lists:member(Node, NotRunning) %% [2]
     end.
+
+update_recoverable_slaves(NodeToForget) ->
+    UpdateFun = fun(Q) ->
+                        update_recoverable_slaves(NodeToForget, Q)
+                end,
+    UpdateDurableFun = fun(Q) ->
+                               update_recoverable_slaves_durable(NodeToForget, Q)
+                       end,
+    FilterFun = fun(Q) ->
+                        ?amqqueue_is_classic(Q) andalso ?amqqueue_is_durable(Q)
+                end,
+    ok = rabbit_db_queue:foreach(UpdateFun, UpdateDurableFun, FilterFun).
+
+update_recoverable_slaves(NodeToForget, Q0) when ?is_amqqueue(Q0) ->
+    RS0 = amqqueue:get_recoverable_slaves(Q0),
+    Q1 = remove_recoverable_slave_from_queue(Q0, NodeToForget, RS0),
+    ok = rabbit_db_queue:set_transient_no_tx(Q1).
+
+update_recoverable_slaves_durable(NodeToForget, Q0) when ?is_amqqueue(Q0) ->
+    RS0 = amqqueue:get_recoverable_slaves(Q0),
+    Q1 = remove_recoverable_slave_from_queue(Q0, NodeToForget, RS0),
+    ok = rabbit_db_queue:set_durable_no_tx(Q1).
+
+remove_recoverable_slave_from_queue(Q, Node, RS0) ->
+    RS1 = lists:delete(Node, RS0),
+    amqqueue:set_recoverable_slaves(Q, RS1).
+
 %% [1] In this case if we are a real running node (i.e. rabbitmqctl
 %% has RPCed into us) then we cannot allow promotion. If on the other
 %% hand we *are* rabbitmqctl impersonating the node for offline

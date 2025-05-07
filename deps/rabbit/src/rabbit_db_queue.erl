@@ -26,6 +26,8 @@
          count/1,
          create_or_get/1,
          set/1,
+         set_durable_no_tx/1,
+         set_transient_no_tx/1,
          set_many/1,
          delete/2,
          update/2,
@@ -55,6 +57,10 @@
 %% HA queues are removed it can be deleted.
 -export([foreach_durable/2,
          internal_delete/3]).
+
+%% Only used by rabbit_amqqueue:update_recoverable_slaves,
+%% thus, once HA queues are removed it can be deleted.
+-export([foreach/3]).
 
 %% Storing it on Khepri is not needed, this function is just used in
 %% rabbit_quorum_queue to ensure the queue is present in the rabbit_queue
@@ -978,6 +984,52 @@ set_in_khepri(Q) ->
     rabbit_khepri:put(Path, Q).
 
 %% -------------------------------------------------------------------
+%% set_transient_no_tx().
+%% -------------------------------------------------------------------
+
+-spec set_transient_no_tx(Queue) -> Ret when
+      Queue :: amqqueue:amqqueue(),
+      Ret :: ok | rabbit_khepri:timeout_error().
+%% @doc Writes a transient queue record without using transactions.
+%%
+%% @private
+
+set_transient_no_tx(Q) ->
+    rabbit_khepri:handle_fallback(
+      #{mnesia => fun() -> set_transient_in_mnesia_no_tx(Q) end,
+        khepri => fun() -> set_in_khepri(Q) end
+       }).
+
+set_transient_in_mnesia_no_tx(Q) ->
+    ok = mnesia:write(?MNESIA_TABLE, Q, write).
+
+%% -------------------------------------------------------------------
+%% set_durable_no_tx().
+%% -------------------------------------------------------------------
+
+-spec set_durable_no_tx(Queue) -> Ret when
+      Queue :: amqqueue:amqqueue(),
+      Ret :: ok | rabbit_khepri:timeout_error().
+%% @doc Writes a durable queue record without using transactions.
+%%
+%% @private
+
+set_durable_no_tx(Q) ->
+    rabbit_khepri:handle_fallback(
+      #{mnesia => fun() -> set_durable_in_mnesia_no_tx(Q) end,
+        khepri => fun() -> set_in_khepri(Q) end
+       }).
+
+set_durable_in_mnesia_no_tx(Q) ->
+    DurableQ = amqqueue:reset_mirroring_and_decorators(Q),
+    case amqqueue:is_durable(Q) of
+        true ->
+            ok = mnesia:write(?MNESIA_DURABLE_TABLE, DurableQ, write);
+        false ->
+            ok
+    end.
+
+%% -------------------------------------------------------------------
 %% set_many().
 %% -------------------------------------------------------------------
 
@@ -1196,6 +1248,64 @@ foreach_transient_in_khepri(UpdateFun) ->
         {error, _} = Error ->
             Error
     end.
+
+foreach_transient_in_khepri(UpdateFun, FilterFun) ->
+    PathPattern = khepri_queues_path() ++
+    [?KHEPRI_WILDCARD_STAR,
+     #if_data_matches{
+        pattern = amqqueue:pattern_match_on_durable(false)}],
+    case rabbit_khepri:filter(PathPattern, fun(_, #{data := Q}) ->
+                                                   FilterFun(Q)
+                                           end) of
+        {ok, Qs} ->
+            maps:foreach(
+              fun(_Path, Queue) when ?is_amqqueue(Queue) ->
+                      UpdateFun(Queue)
+              end, Qs);
+        {error, _} = Error ->
+            Error
+    end.
+
+%% -------------------------------------------------------------------
+%% foreach().
+%% -------------------------------------------------------------------
+
+-spec foreach(UpdateFun, UpdateDurableFun, FilterFun) -> ok when
+      UpdateFun :: fun((Queue) -> any()),
+      UpdateDurableFun :: fun((Queue) -> any()),
+      FilterFun :: fun((Queue) -> boolean()).
+%% @doc Applies `UpdateFun' to all transient queue records and
+%% `DurableFun' to all durable queue records that match `FilterFun'.
+%%
+%% @private
+
+foreach(UpdateFun, UpdateDurableFun, FilterFun) ->
+    rabbit_khepri:handle_fallback(
+      #{mnesia => fun() -> foreach_in_mnesia(UpdateFun, UpdateDurableFun, FilterFun) end,
+        khepri => fun() -> foreach_in_khepri(UpdateFun, FilterFun) end
+       }).
+
+foreach_in_mnesia(UpdateFun, UpdateDurableFun, FilterFun) ->
+    %% Note rabbit is not running so we avoid e.g. the worker pool. Also why
+    %% we don't invoke the return from rabbit_binding:process_deletions/1.
+    Pattern = amqqueue:pattern_match_all(),
+    {atomic, ok} =
+    mnesia:sync_transaction(
+      fun () ->
+              Qs = mnesia:match_object(?MNESIA_TABLE, Pattern, write),
+              _ = [UpdateFun(Q) || Q <- Qs, FilterFun(Q)],
+              DurableQs = mnesia:match_object(?MNESIA_DURABLE_TABLE, Pattern, write),
+              _ = [begin
+                       Q1 = amqqueue:reset_mirroring_and_decorators(Q),
+                       UpdateDurableFun(Q1)
+                   end || Q <- DurableQs, FilterFun(Q)],
+              ok
+      end),
+    ok.
+
+foreach_in_khepri(UpdateFun, FilterFun) ->
+    foreach_transient_in_khepri(UpdateFun, FilterFun),
+    foreach_durable_in_khepri(UpdateFun, FilterFun).
 
 %% -------------------------------------------------------------------
 %% foreach_durable().
