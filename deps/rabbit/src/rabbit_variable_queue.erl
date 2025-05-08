@@ -1467,7 +1467,18 @@ expand_delta(_SeqId, #delta { count       = Count,
 
 init(QueueVsn, IsDurable, IndexMod, IndexState, StoreState, DeltaCount, DeltaBytes, Terms,
      PersistentClient, TransientClient, VHost) ->
-    {LowSeqId, HiSeqId, IndexState1} = IndexMod:bounds(IndexState),
+
+    NextSeqIdHint = case Terms of
+                        non_clean_shutdown -> undefined;
+                        _ -> proplists:get_value(next_seq_id, Terms)
+                    end,
+
+    {LowSeqId, HiSeqId, IndexState1} = case IndexMod of
+                                           rabbit_classic_queue_index_v2 ->
+                                               rabbit_classic_queue_index_v2:bounds(IndexState, NextSeqIdHint);
+                                           _ ->
+                                               IndexMod:bounds(IndexState)
+                                       end,
 
     {NextSeqId, NextDeliverSeqId, DeltaCount1, DeltaBytes1} =
         case Terms of
