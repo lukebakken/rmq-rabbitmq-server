@@ -1952,26 +1952,29 @@ node_permits_offline_promotion(Node) ->
     end.
 
 update_recoverable_slaves(NodeToForget) ->
+    ClusterNodes = rabbit_nodes:list_members(),
     UpdateFun = fun(Q) ->
-                        update_recoverable_slaves(NodeToForget, Q)
+                        update_recoverable_slaves(ClusterNodes, NodeToForget, Q)
                 end,
     UpdateDurableFun = fun(Q) ->
-                               update_recoverable_slaves_durable(NodeToForget, Q)
+                               update_recoverable_slaves_durable(ClusterNodes, NodeToForget, Q)
                        end,
     FilterFun = fun(Q) ->
                         ?amqqueue_is_classic(Q) andalso ?amqqueue_is_durable(Q)
                 end,
     ok = rabbit_db_queue:foreach(UpdateFun, UpdateDurableFun, FilterFun).
 
-update_recoverable_slaves(NodeToForget, Q0) when ?is_amqqueue(Q0) ->
-    RS0 = amqqueue:get_recoverable_slaves(Q0),
-    Q1 = remove_recoverable_slave_from_queue(Q0, NodeToForget, RS0),
+update_recoverable_slaves(ClusterNodes, NodeToForget, Q0) when ?is_amqqueue(Q0) ->
+    Q1 = filter_recoverable_slaves(ClusterNodes, NodeToForget, Q0),
     ok = rabbit_db_queue:set_transient_no_tx(Q1).
 
-update_recoverable_slaves_durable(NodeToForget, Q0) when ?is_amqqueue(Q0) ->
-    RS0 = amqqueue:get_recoverable_slaves(Q0),
-    Q1 = remove_recoverable_slave_from_queue(Q0, NodeToForget, RS0),
+update_recoverable_slaves_durable(ClusterNodes, NodeToForget, Q0) when ?is_amqqueue(Q0) ->
+    Q1 = filter_recoverable_slaves(ClusterNodes, NodeToForget, Q0),
     ok = rabbit_db_queue:set_durable_no_tx(Q1).
+
+filter_recoverable_slaves(ClusterNodes, NodeToForget, Q) ->
+    RS1 =  [RS || RS <- amqqueue:get_recoverable_slaves(Q), lists:member(RS, ClusterNodes)],
+    remove_recoverable_slave_from_queue(Q, NodeToForget, RS1).
 
 remove_recoverable_slave_from_queue(Q, Node, RS0) ->
     RS1 = lists:delete(Node, RS0),
