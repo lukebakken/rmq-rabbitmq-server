@@ -1953,16 +1953,14 @@ node_permits_offline_promotion(Node) ->
 
 update_recoverable_slaves(NodeToForget) ->
     ClusterNodes = rabbit_nodes:list_members(),
+    MatchSpec = amqqueue:match_spec_durable_classic_with_recoverable_slaves(),
     UpdateFun = fun(Q) ->
                         update_recoverable_slaves(ClusterNodes, NodeToForget, Q)
                 end,
     UpdateDurableFun = fun(Q) ->
                                update_recoverable_slaves_durable(ClusterNodes, NodeToForget, Q)
                        end,
-    FilterFun = fun(Q) ->
-                        ?amqqueue_is_classic(Q) andalso ?amqqueue_is_durable(Q)
-                end,
-    ok = rabbit_db_queue:foreach(UpdateFun, UpdateDurableFun, FilterFun).
+    ok = rabbit_db_queue:foreach(UpdateFun, UpdateDurableFun, MatchSpec, MatchSpec).
 
 update_recoverable_slaves(ClusterNodes, NodeToForget, Q0) when ?is_amqqueue(Q0) ->
     Q1 = filter_recoverable_slaves(ClusterNodes, NodeToForget, Q0),

@@ -81,6 +81,7 @@
          pattern_match_on_type/1,
          pattern_match_on_durable/1,
          pattern_match_on_type_and_durable/2,
+         match_spec_durable_classic_with_recoverable_slaves/0,
          reset_mirroring_and_decorators/1,
          set_immutable/1,
          qnode/1,
@@ -609,6 +610,16 @@ pattern_match_on_durable(IsDurable) ->
 
 pattern_match_on_type_and_durable(Type, IsDurable) ->
     #amqqueue{type = Type, durable = IsDurable, _ = '_'}.
+
+-spec match_spec_durable_classic_with_recoverable_slaves() -> ets:match_spec().
+
+match_spec_durable_classic_with_recoverable_slaves() ->
+    [{#amqqueue{durable = true,
+                recoverable_slaves = '$1',
+                type = rabbit_classic_queue,
+                _ = '_'},
+      [{'andalso',{is_list,'$1'},{'>',{length,'$1'},0}}],
+      ['$_']}].
 
 -spec reset_mirroring_and_decorators(amqqueue()) -> amqqueue().
 

@@ -60,7 +60,7 @@
 
 %% Only used by rabbit_amqqueue:update_recoverable_slaves,
 %% thus, once HA queues are removed it can be deleted.
--export([foreach/3]).
+-export([foreach/4]).
 
 %% Storing it on Khepri is not needed, this function is just used in
 %% rabbit_quorum_queue to ensure the queue is present in the rabbit_queue
@@ -1249,61 +1249,45 @@ foreach_transient_in_khepri(UpdateFun) ->
             Error
     end.
 
-foreach_transient_in_khepri(UpdateFun, FilterFun) ->
-    PathPattern = khepri_queues_path() ++
-    [?KHEPRI_WILDCARD_STAR,
-     #if_data_matches{
-        pattern = amqqueue:pattern_match_on_durable(false)}],
-    case rabbit_khepri:filter(PathPattern, fun(_, #{data := Q}) ->
-                                                   FilterFun(Q)
-                                           end) of
-        {ok, Qs} ->
-            maps:foreach(
-              fun(_Path, Queue) when ?is_amqqueue(Queue) ->
-                      UpdateFun(Queue)
-              end, Qs);
-        {error, _} = Error ->
-            Error
-    end.
-
 %% -------------------------------------------------------------------
 %% foreach().
 %% -------------------------------------------------------------------
 
--spec foreach(UpdateFun, UpdateDurableFun, FilterFun) -> ok when
+-spec foreach(UpdateFun, UpdateDurableFun, MatchSpec, DurableMatchSpec) -> ok when
       UpdateFun :: fun((Queue) -> any()),
       UpdateDurableFun :: fun((Queue) -> any()),
-      FilterFun :: fun((Queue) -> boolean()).
-%% @doc Applies `UpdateFun' to all transient queue records and
-%% `DurableFun' to all durable queue records that match `FilterFun'.
+      MatchSpec :: ets:match_spec(),
+      DurableMatchSpec :: ets:match_spec().
+%% @doc Applies `UpdateFun' to all transient queue records that match
+%% `MatchSpec` and `DurableFun' to all durable queue records that
+%% match `DurableMatchSpec'.
 %%
 %% @private
 
-foreach(UpdateFun, UpdateDurableFun, FilterFun) ->
+foreach(UpdateFun, UpdateDurableFun, MatchSpec, DurableMatchSpec) ->
+    %% NOTE:
+    %% This function is only called as part of CMQ management, thus, it will
+    %% never be used with Khepri
     rabbit_khepri:handle_fallback(
-      #{mnesia => fun() -> foreach_in_mnesia(UpdateFun, UpdateDurableFun, FilterFun) end,
-        khepri => fun() -> foreach_in_khepri(UpdateFun, FilterFun) end
+      #{mnesia => fun() -> foreach_in_mnesia(UpdateFun, UpdateDurableFun, MatchSpec, DurableMatchSpec) end,
+        khepri => fun() -> throw(khepri_not_supported) end
        }).
 
-foreach_in_mnesia(UpdateFun, UpdateDurableFun, FilterFun) ->
-    Pattern = amqqueue:pattern_match_all(),
+foreach_in_mnesia(UpdateFun, UpdateDurableFun, MatchSpec, DurableMatchSpec) ->
     {atomic, ok} =
     mnesia:sync_transaction(
       fun () ->
-              Qs = mnesia:match_object(?MNESIA_TABLE, Pattern, write),
-              _ = [UpdateFun(Q) || Q <- Qs, FilterFun(Q)],
-              DurableQs = mnesia:match_object(?MNESIA_DURABLE_TABLE, Pattern, write),
-              _ = [begin
-                       Q1 = amqqueue:reset_mirroring_and_decorators(Q),
-                       UpdateDurableFun(Q1)
-                   end || Q <- DurableQs, FilterFun(Q)],
+              Qs = mnesia:select(?MNESIA_TABLE, MatchSpec, write),
+              lists:foreach(UpdateFun, Qs),
+
+              DurableQs = mnesia:select(?MNESIA_DURABLE_TABLE, DurableMatchSpec, write),
+              lists:foreach(fun(Q) ->
+                                    Q1 = amqqueue:reset_mirroring_and_decorators(Q),
+                                    UpdateDurableFun(Q1)
+                            end, DurableQs),
               ok
       end),
     ok.
-
-foreach_in_khepri(UpdateFun, FilterFun) ->
-    foreach_transient_in_khepri(UpdateFun, FilterFun),
-    foreach_durable_in_khepri(UpdateFun, FilterFun).
 
 %% -------------------------------------------------------------------
 %% foreach_durable().
