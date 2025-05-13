@@ -1286,8 +1286,6 @@ foreach(UpdateFun, UpdateDurableFun, FilterFun) ->
        }).
 
 foreach_in_mnesia(UpdateFun, UpdateDurableFun, FilterFun) ->
-    %% Note rabbit is not running so we avoid e.g. the worker pool. Also why
-    %% we don't invoke the return from rabbit_binding:process_deletions/1.
     Pattern = amqqueue:pattern_match_all(),
     {atomic, ok} =
     mnesia:sync_transaction(
