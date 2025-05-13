@@ -529,12 +529,16 @@ store_updated_slaves_in_khepri(Q0, Decorators) ->
 %% down, but we don't have a good way to predict what the optimal is
 %% in that case anyway, and we assume nodes will not just be down for
 %% a long time without being removed.
-update_recoverable(SPids, RS) ->
-    SNodes = [node(SPid) || SPid <- SPids],
+update_recoverable(SPids, RS0) ->
+    ClusterNodes = rabbit_nodes:list_members(),
     RunningNodes = rabbit_nodes:list_running(),
-    AddNodes = SNodes -- RS,
+    SNodes = [node(SPid) || SPid <- SPids],
+    AddNodes = SNodes -- RS0,
     DelNodes = RunningNodes -- SNodes, %% i.e. running with no slave
-    (RS -- DelNodes) ++ AddNodes.
+    RS1 = (RS0 -- DelNodes) ++ AddNodes,
+    %% Ensure that stale recoverable slaves that are no longer cluster
+    %% members are removed from the list.
+    [RS || RS <- RS1, lists:member(RS, ClusterNodes)].
 
 stop_all_slaves(Reason, SPids, QName, GM, WaitTimeout) ->
     PidsMRefs = [{Pid, erlang:monitor(process, Pid)} || Pid <- [GM | SPids]],
