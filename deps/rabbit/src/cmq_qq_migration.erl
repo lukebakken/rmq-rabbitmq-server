@@ -19,15 +19,13 @@
 %% and thus no producers or consumers.
 
 start_link() ->
-    PoolSize = erlang:system_info(schedulers),
+    PoolSize = erlang:system_info(schedulers) div 2,
     worker_pool_sup:start_link(PoolSize, ?MODULE).
 
 %% Public API
 start() ->
     try
-        {true, Nodes} = ensure_cluster_running(),
-        start_worker_pools(Nodes),
-        maybe_start_with_lock(get_queue_migrate_lock(), Nodes)
+        maybe_start_with_running_cluster(ensure_cluster_running())
     catch
         Class:Ex:Stack ->
             ?LOG_ERROR("exception in ~tp", [?MODULE]),
@@ -41,11 +39,24 @@ start_async() ->
 
 %% Private
 
+maybe_start_with_running_cluster({true, Nodes}) ->
+    maybe_start_with_no_connections(ensure_no_connections(Nodes));
+maybe_start_with_running_cluster({false, _}) ->
+    ?LOG_ERROR("cmq to qq migration requires all cluster member nodes to be running."),
+    {error, cmq_qq_migration_requires_running_cluster}.
+
+maybe_start_with_no_connections({true, Nodes}) ->
+    ok = start_worker_pools(Nodes),
+    maybe_start_with_lock(get_queue_migrate_lock(), Nodes);
+maybe_start_with_no_connections({false, _}) ->
+    ?LOG_ERROR("cmq to qq migration requires that no connections are active."),
+    {error, cmq_qq_migration_requires_no_connections}.
+
 maybe_start_with_lock({true, GlobalLockId}, Nodes) ->
     ok = start_with_lock(GlobalLockId, Nodes);
 maybe_start_with_lock(false, _Nodes) ->
-    ?LOG_WARNING("queue migration operation is in progress, please wait."),
-    {error, queue_migration_in_progress}.
+    ?LOG_WARNING("cmq to qq migration is already in progress, please wait."),
+    {error, cmq_qq_migration_in_progress}.
 
 start_with_lock(GlobalLockId, Nodes) ->
     try 
@@ -83,8 +94,8 @@ start_migration([ClassicQ | Rest], Gatherer) ->
     start_migration(Rest, Gatherer).
 
 do_migration(ClassicQ, Gatherer) ->
-    PPid = self(),
     Ref = make_ref(),
+    PPid = self(),
     Fun = fun() ->
                   try
                       AddTmpPrefixFun = fun(Name) ->
@@ -111,9 +122,11 @@ do_migration(ClassicQ, Gatherer) ->
                      ?LOG_INFO("done migrating queue ~tp",[QName]),
                      ok;
                  {CPid, Ref, Error} ->
+                     ?LOG_ERROR("do_migration error: ~tp", [Error]),
                      {error, Error}
              after
                  ?QUEUE_MIGRATION_TIMEOUT_MS ->
+                     ?LOG_ERROR("do_migration timeout!"),
                      {error, timeout}
              end,
     ok = gatherer:finish(Gatherer),
@@ -282,12 +295,28 @@ get_queue_migrate_lock() ->
             false
     end.
 
--spec ensure_cluster_running() -> boolean().
+-spec ensure_cluster_running() -> {boolean(), list(node())}.
 ensure_cluster_running() ->
     M = sets:from_list(rabbit_nodes:list_members()),
     R = sets:from_list(rabbit_nodes:list_running()),
     Result = sets:is_subset(M, R) andalso sets:is_subset(R, M),
     {Result, sets:to_list(M)}.
+
+-spec ensure_no_connections(list(node())) -> {boolean(), list(node())}.
+ensure_no_connections(Nodes) ->
+    ensure_no_connections(Nodes, Nodes).
+
+ensure_no_connections([], Nodes) ->
+    {true, Nodes};
+ensure_no_connections([Node | Rest], Nodes) ->
+    case erpc:call(Node, rabbit_networking, local_connections, []) of
+      Conns when is_list(Conns) andalso length(Conns) > 0 ->
+            {false, Nodes};
+      Conns when is_list(Conns) andalso length(Conns) =:= 0 ->
+            ensure_no_connections(Rest, Nodes);
+      Unexpected ->
+            {false, Unexpected}
+    end.
 
 -spec start_worker_pools(list(node())) -> ok.
 start_worker_pools([]) ->
