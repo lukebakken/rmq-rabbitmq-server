@@ -19,13 +19,22 @@
 %% and thus no producers or consumers.
 
 start_link() ->
-    worker_pool_sup:start_link(2, ?MODULE).
+    PoolSize = erlang:system_info(schedulers),
+    worker_pool_sup:start_link(PoolSize, ?MODULE).
 
 %% Public API
 start() ->
-    {true, Nodes} = ensure_cluster_running(),
-    start_worker_pools(Nodes),
-    maybe_start_with_lock(get_queue_migrate_lock(), Nodes).
+    try
+        {true, Nodes} = ensure_cluster_running(),
+        start_worker_pools(Nodes),
+        maybe_start_with_lock(get_queue_migrate_lock(), Nodes)
+    catch
+        Class:Ex:Stack ->
+            ?LOG_ERROR("exception in ~tp", [?MODULE]),
+            ?LOG_ERROR(" - class ~tp", [Class]),
+            ?LOG_ERROR(" - ex ~tp", [Ex]),
+            ?LOG_ERROR(" - stack ~tp", [Stack])
+    end.
 
 start_async() ->
     spawn(fun start/0).
