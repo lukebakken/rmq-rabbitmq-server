@@ -47,7 +47,7 @@ maybe_start_with_running_cluster({false, _}) ->
 
 maybe_start_with_no_connections({true, Nodes}) ->
     ok = start_worker_pools(Nodes),
-    maybe_start_with_lock(get_queue_migrate_lock(), Nodes);
+    maybe_start_with_lock(get_queue_migrate_lock(Nodes), Nodes);
 maybe_start_with_no_connections({false, _}) ->
     ?LOG_ERROR("cmq to qq migration requires that no connections are active."),
     {error, cmq_qq_migration_requires_no_connections}.
@@ -210,7 +210,6 @@ delete(Q, State) ->
                             ok;
                         {{'DOWN', QRef}, _, process, _Pid, normal} ->
                             ok
-                        %% TODO log other messages
                     after 10000 ->
                         ?LOG_WARNING("queue deletion timeout for ~tp", [qstr(Q)])
                     end;
@@ -233,7 +232,6 @@ settle(OldQ, Name, MsgId, QueueState) ->
                         %% Since no channels etc, I assume we can just ignore event response?
                         rabbit_queue_type:handle_event(QRef, Evt, NewState),
                     ok
-                %% TODO log other messages
             after 10000 ->
                 ?LOG_WARNING("queue settle timeout for ~tp", [qstr(OldQ)])
             end;
@@ -291,11 +289,10 @@ qstr(Q) when ?is_amqqueue(Q) ->
     Res = amqqueue:get_name(Q),
     rabbit_misc:rs(Res).
 
--spec get_queue_migrate_lock() ->
+-spec get_queue_migrate_lock(list(node())) ->
     {true, {?MODULE, pid()}} | false.
-get_queue_migrate_lock() ->
+get_queue_migrate_lock(Nodes) when is_list(Nodes) ->
     Id = {?MODULE, self()},
-    Nodes = [node()|nodes()],
     %% Note that we're not re-trying. We want to immediately know
     %% if a queue migration is taking place and stop accordingly.
     case global:set_lock(Id, Nodes, 0) of
