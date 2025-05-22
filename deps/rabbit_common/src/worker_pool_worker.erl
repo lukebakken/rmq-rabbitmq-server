@@ -137,11 +137,10 @@ handle_info({'DOWN', _MRef, process, _Pid, _Reason}, State) ->
 handle_info({timeout, Key, Fun}, State) ->
     clear_timeout(Key),
     Fun(),
-    {noreply, State, hibernate}.
+    {noreply, State, hibernate};
 
-%%%% TODO LRB
-%%%% handle_info(Msg, State) ->
-%%%%     {stop, {unexpected_info, Msg}, State}.
+handle_info(Msg, State) ->
+    {stop, {unexpected_info, Msg}, State}.
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.

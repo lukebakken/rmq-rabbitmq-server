@@ -98,43 +98,53 @@ do_migration(ClassicQ, Gatherer) ->
     PPid = self(),
     Fun = fun() ->
                   try
-                      AddTmpPrefixFun = fun(Name) ->
-                                                ?LOG_INFO("migrating queue ~tp",[Name]),
-                                                <<"tmp_", Name/binary>>
-                                        end,
-                      {ok, QuorumQ0} = migrate_to_qq(ClassicQ, AddTmpPrefixFun),
-
-                      RemoveTmpPrefixFun = fun(Name) ->
-                                                   ?LOG_INFO("migrating queue ~tp",[Name]),
-                                                   <<"tmp_", CleanName/binary>> = Name,
-                                                   CleanName
-                                           end,
-                      {ok, QuorumQ1} = migrate_to_qq(QuorumQ0, RemoveTmpPrefixFun),
+                      {ok, QuorumQ0} = migrate_to_tmp_qq(ClassicQ),
+                      {ok, QuorumQ1} = tmp_qq_to_qq(QuorumQ0),
                       PPid ! {self(), Ref, {ok, qstr(QuorumQ1)}}
                   catch C:R:S ->
-                            PPid ! {self(), Ref, {error, {C, R, S}}}
+                      PPid ! {self(), Ref, {error, {C, R, S}}}
+                  after
+                      unlink(PPid)
                   end
           end,
     % Note: must be in its own process to handle ra event messages
     CPid = spawn_link(Fun),
-    Result = receive
-                 {CPid, Ref, {ok, QName}} ->
-                     ?LOG_INFO("done migrating queue ~tp",[QName]),
-                     ok;
-                 {CPid, Ref, Error} ->
-                     ?LOG_ERROR("do_migration error: ~tp", [Error]),
-                     {error, Error}
-             after
-                 ?QUEUE_MIGRATION_TIMEOUT_MS ->
-                     ?LOG_ERROR("do_migration timeout!"),
-                     {error, timeout}
-             end,
+    Result = wait_child(CPid, Ref),
     ok = gatherer:finish(Gatherer),
     Result.
 
-migrate_to_qq(Q, NameFun) ->
-    Resource = amqqueue:get_name(Q),
+wait_child(CPid, Ref) ->
+    receive
+        {CPid, Ref, {ok, QName}} ->
+            ?LOG_INFO("done migrating queue ~tp",[QName]),
+            ok;
+        {CPid, Ref, Error} ->
+            ?LOG_ERROR("do_migration error: ~tp", [Error]),
+            {error, Error};
+        Other ->
+            ?LOG_DEBUG("do_migration handled other message: ~tp", [Other]),
+            wait_child(CPid, Ref)
+    after
+        ?QUEUE_MIGRATION_TIMEOUT_MS ->
+            ?LOG_ERROR("do_migration timeout!"),
+            {error, timeout}
+    end.
 
+migrate_to_tmp_qq(Q) ->
+    AddTmpPrefixFun = fun(Name) ->
+                              <<"tmp_", Name/binary>>
+                      end,
+    migrate(Q, AddTmpPrefixFun).
+
+tmp_qq_to_qq(Q) ->
+    RemoveTmpPrefixFun = fun(Name) ->
+                                 <<"tmp_", CleanName/binary>> = Name,
+                                 CleanName
+                         end,
+    migrate(Q, RemoveTmpPrefixFun).
+
+migrate(Q, NameFun) ->
+    Resource = amqqueue:get_name(Q),
     QName = Resource#resource.name,
     NewQName = NameFun(QName),
     ?LOG_INFO("migrating ~tp to ~tp", [QName, NewQName]),
@@ -146,10 +156,10 @@ migrate_to_qq(Q, NameFun) ->
     Bindings = rabbit_binding:list_for_destination(Resource),
     %% TODO check binding result
     [rabbit_binding:add(B#binding{destination = NewResource}, <<"internaluser">>) || B <- Bindings],
-    ok = migrate(Q, NewQ),
+    ok = migrate_queue_messages(Q, NewQ),
     {ok, NewQ}.
 
-migrate(OldQ, NewQ) ->
+migrate_queue_messages(OldQ, NewQ) ->
     OldQState = rabbit_queue_type:init(),
     NewQState = rabbit_queue_type:init(),
     ok = dequeue_and_deliver(OldQ, NewQ, OldQState, NewQState).
