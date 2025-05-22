@@ -109,11 +109,11 @@ do_migration(ClassicQ, Gatherer) ->
           end,
     % Note: must be in its own process to handle ra event messages
     CPid = spawn_link(Fun),
-    Result = wait_child(CPid, Ref),
+    Result = wait_for_migration(CPid, Ref),
     ok = gatherer:finish(Gatherer),
     Result.
 
-wait_child(CPid, Ref) ->
+wait_for_migration(CPid, Ref) ->
     receive
         {CPid, Ref, {ok, QName}} ->
             ?LOG_INFO("done migrating queue ~tp",[QName]),
@@ -123,7 +123,7 @@ wait_child(CPid, Ref) ->
             {error, Error};
         Other ->
             ?LOG_DEBUG("do_migration handled other message: ~tp", [Other]),
-            wait_child(CPid, Ref)
+            wait_for_migration(CPid, Ref)
     after
         ?QUEUE_MIGRATION_TIMEOUT_MS ->
             ?LOG_ERROR("do_migration timeout!"),
@@ -250,7 +250,7 @@ deliver(Q, Msg, State) ->
         {'$gen_cast', {queue_event, QRef, {_, {applied, [{_, ok}]}} = Evt}} ->
             {ok, LState, _} = rabbit_queue_type:handle_event(QRef, Evt, NewState),
             LState
-    after 1000 ->
+    after 10000 ->
         ?LOG_WARNING("queue deliver timeout for ~tp", [qstr(Q)])
     end.
 
