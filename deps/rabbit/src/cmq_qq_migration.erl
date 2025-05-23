@@ -9,7 +9,8 @@
          start_async/0,
          start_migration/1]).
 
--define(QUEUE_MIGRATION_TIMEOUT_MS, 60000).
+-define(QUEUE_MIGRATION_TIMEOUT_RETRIES, 5). % 5 retries of 2 minutes each, 10 minutes total to migrate queue
+-define(QUEUE_MIGRATION_TIMEOUT_MS, 120000). % 2 minutes
 
 %% Notes:
 %% https://www.rabbitmq.com/docs/3.13/vhosts#migration-to-quorum-queues-a-way-to-relax-queue-property-equivalence-checks
@@ -19,8 +20,7 @@
 %% and thus no producers or consumers.
 
 start_link() ->
-    PoolSize = erlang:system_info(schedulers) div 2,
-    worker_pool_sup:start_link(PoolSize, ?MODULE).
+    worker_pool_sup:start_link(calculate_worker_pool_size(), ?MODULE).
 
 %% Public API
 start() ->
@@ -109,11 +109,14 @@ do_migration(ClassicQ, Gatherer) ->
           end,
     % Note: must be in its own process to handle ra event messages
     CPid = spawn_link(Fun),
-    Result = wait_for_migration(CPid, Ref),
+    Result = wait_for_migration(CPid, Ref, ?QUEUE_MIGRATION_TIMEOUT_RETRIES),
     ok = gatherer:finish(Gatherer),
     Result.
 
-wait_for_migration(CPid, Ref) ->
+wait_for_migration(_CPid, _Ref, 0) ->
+    ?LOG_ERROR("final do_migration timeout!"),
+    {error, timeout};
+wait_for_migration(CPid, Ref, Retries0) ->
     receive
         {CPid, Ref, {ok, QName}} ->
             ?LOG_INFO("done migrating queue ~tp",[QName]),
@@ -123,11 +126,12 @@ wait_for_migration(CPid, Ref) ->
             {error, Error};
         Other ->
             ?LOG_DEBUG("do_migration handled other message: ~tp", [Other]),
-            wait_for_migration(CPid, Ref)
+            wait_for_migration(CPid, Ref, Retries0)
     after
         ?QUEUE_MIGRATION_TIMEOUT_MS ->
-            ?LOG_ERROR("do_migration timeout!"),
-            {error, timeout}
+            Retries1 = Retries0 - 1,
+            ?LOG_ERROR("do_migration timeout, retrying. Retries remaining: ~B", [Retries1]),
+            wait_for_migration(CPid, Ref, Retries1)
     end.
 
 migrate_to_tmp_qq(Q) ->
@@ -338,3 +342,14 @@ start_worker_pools([Node | Rest]) ->
             ok
     end,
     start_worker_pools(Rest).
+
+calculate_worker_pool_size() ->
+    S = erlang:system_info(schedulers) div 4,
+    adjust_worker_pool_size(S).
+
+adjust_worker_pool_size(S) when is_number(S) andalso S < 2 ->
+    2;
+adjust_worker_pool_size(S) when is_number(S) andalso S > 8 ->
+    8;
+adjust_worker_pool_size(S) when is_number(S) ->
+    S.
