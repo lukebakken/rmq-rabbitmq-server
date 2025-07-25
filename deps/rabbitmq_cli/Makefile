@@ -67,7 +67,10 @@ $(ESCRIPT_FILE): $(EX_FILES)
 ESCRIPT_EMU_ARGS += -hidden
 
 escript-zip::
-	$(verbose) $(ESCRIPT_ZIP) $(ESCRIPT_ZIP_FILE) $(ELIXIR_LIBS)/*
+	$(verbose) cd $(ELIXIR_LIBS) && $(ESCRIPT_ZIP) $(ESCRIPT_ZIP_FILE) eex
+	$(verbose) cd $(ELIXIR_LIBS) && $(ESCRIPT_ZIP) $(ESCRIPT_ZIP_FILE) elixir
+	$(verbose) cd $(ELIXIR_LIBS) && $(ESCRIPT_ZIP) $(ESCRIPT_ZIP_FILE) logger
+	$(verbose) cd $(ELIXIR_LIBS) && $(ESCRIPT_ZIP) $(ESCRIPT_ZIP_FILE) mix
 
 LINKED_ESCRIPTS = escript/rabbitmq-plugins \
 	escript/rabbitmq-diagnostics \
