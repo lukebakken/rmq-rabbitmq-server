@@ -16,7 +16,8 @@
          update_rates/1, needs_timeout/1, timeout/1,
          handle_pre_hibernate/1, resume/1, msg_rates/1,
          info/2, invoke/3, is_duplicate/2, set_queue_mode/2,
-         set_queue_version/2, zip_msgs_and_acks/4]).
+         set_queue_version/2, zip_msgs_and_acks/4,
+         format_state/1]).
 
 -export([start/2, stop/1]).
 
@@ -2435,3 +2436,7 @@ maybe_client_terminate(MSCStateP) ->
         _:_ ->
             ok
     end.
+
+format_state(#vqstate{}=S) ->
+    S#vqstate{ram_pending_ack = ram_pending_ack_truncated,
+              disk_pending_ack = disk_pending_ack_truncated}.
