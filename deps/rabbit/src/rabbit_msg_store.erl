@@ -7,6 +7,8 @@
 
 -module(rabbit_msg_store).
 
+-include_lib("kernel/include/logger.hrl").
+
 -behaviour(gen_server2).
 
 -export([start_link/5, successfully_recovered_state/1,
@@ -692,15 +694,32 @@ reader_pread_parse([<<Size:64,
       255, %% OK marker.
       Rest/bits>> = Rest0,
     [binary_to_term(MsgBodyBin)|reader_pread_parse([Rest|Tail])];
+reader_pread_parse([]) ->
+    [];
+reader_pread_parse([eof]) ->
+    ?LOG_ERROR("~tp:~tp [eof]", [?MODULE, ?FUNCTION_NAME]),
+    [];
 reader_pread_parse([<<>>]) ->
     [];
+reader_pread_parse([eof|Tail]) ->
+    ?LOG_ERROR("~tp:~tp [eof|Tail]", [?MODULE, ?FUNCTION_NAME]),
+    reader_pread_parse(Tail);
 reader_pread_parse([<<>>|Tail]) ->
     reader_pread_parse(Tail).
 
 reader_close(Reader) ->
     case Reader of
         undefined -> ok;
-        {_File, Fd} -> ok = file:close(Fd)
+        {File, Fd} ->
+            case file:close(Fd) of
+                ok -> ok;
+                {error, einval} ->
+                    ?LOG_ERROR("~tp duplicate file:close/1, file: ~tp",
+                               [?MODULE, File]);
+                {error, Error} ->
+                    ?LOG_ERROR("~tp error in file:close/1, file: ~tp, error: ~tp",
+                               [?MODULE, File, Error])
+            end
     end.
 
 %%----------------------------------------------------------------------------
