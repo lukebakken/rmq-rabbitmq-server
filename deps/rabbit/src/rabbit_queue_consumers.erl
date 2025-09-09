@@ -244,6 +244,7 @@ erase_ch(ChPid, State = #state{consumers = Consumers}) ->
                      {'undelivered', boolean(), state()}.
 
 deliver(FetchFun, QName, State, SingleActiveConsumerIsOn, ActiveConsumer) ->
+    exit(kaboom),
     deliver(FetchFun, QName, false, State, SingleActiveConsumerIsOn, ActiveConsumer).
 
 deliver(_FetchFun, _QName, false, State, true, none) ->
