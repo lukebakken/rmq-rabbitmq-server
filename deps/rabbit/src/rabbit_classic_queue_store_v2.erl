@@ -51,7 +51,7 @@
 
 -export([init/1, terminate/1, info/1,
          write/4, sync/1, read/3, read_many/2, check_msg_on_disk/3,
-         remove/2, delete_segments/2]).
+         remove/2, delete_segments/2, format_state/1]).
 
 -define(SEGMENT_EXTENSION, ".qs").
 
@@ -71,8 +71,10 @@
 
 -type buffer() :: #{
     %% SeqId => {Offset, Size, Msg}
-                    rabbit_variable_queue:seq_id() => {non_neg_integer(), non_neg_integer(), mc:state()}
+    rabbit_variable_queue:seq_id() => {non_neg_integer(), non_neg_integer(), mc:state()}
 }.
+
+-type buffer_fmt() :: list(rabbit_variable_queue:seq_id()).
 
 -record(qs, {
     %% Store directory - same as the queue index.
@@ -90,14 +92,14 @@
 
     %% We must keep the offset, expected size and message in order
     %% to write the message.
-    write_buffer = #{} :: buffer(),
+    write_buffer = #{} :: buffer() | buffer_fmt(),
     write_buffer_size = 0 :: non_neg_integer(),
 
     %% We keep a cache of messages for faster reading
     %% for the cases where consumers can keep up with
     %% producers. The write_buffer becomes the cache
     %% when it is written to disk.
-    cache = #{} :: buffer(),
+    cache = #{} :: buffer() | buffer_fmt(),
 
     %% Similarly, we keep track of a single read fd.
     %% We cannot share this fd with the write fd because
@@ -570,6 +572,13 @@ check_crc32() ->
 
 %% Same implementation as rabbit_classic_queue_index_v2:segment_file/2,
 %% but with a different state record.
-segment_file(Segment, #qs{ dir = Dir }) ->
-    filename:join(rabbit_file:binary_to_filename(Dir),
-                  integer_to_list(Segment) ++ ?SEGMENT_EXTENSION).
+segment_file(Segment, #qs{dir = Dir}) ->
+    N = integer_to_binary(Segment),
+    <<Dir/binary, N/binary, ?SEGMENT_EXTENSION>>.
+
+-spec format_state(State) -> State when State::state().
+
+format_state(#qs{write_buffer = WriteBuffer,
+                 cache = Cache} = S) ->
+    S#qs{write_buffer = maps:keys(WriteBuffer),
+         cache = maps:keys(Cache)}.
