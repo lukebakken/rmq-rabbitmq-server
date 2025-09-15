@@ -2002,9 +2002,16 @@ compact_file(File, State = #gc_state { file_summary_ets = FileSummaryEts }) ->
     case ets:lookup(FileSummaryEts, File) of
         [] ->
             ?LOG_DEBUG("File ~tp has already been deleted; no need to compact",
-                             [File]),
+                       [File]),
+            ok;
+        [#file_summary{locked = true}] ->
+            ?LOG_DEBUG("File ~tp is already being compacted; skipping duplicate compaction",
+                       [File]),
             ok;
         [#file_summary{file_size = FileSize}] ->
+            %% Mark file as locked during compaction
+            true = ets:update_element(FileSummaryEts, File,
+                                      {#file_summary.locked, true}),
             compact_file(File, FileSize, State)
     end.
 
@@ -2060,9 +2067,16 @@ compact_file(File, FileSize,
     %% It's possible that after we compact we end up with a TruncateSize of 0.
     %% In that case we don't schedule a truncation and will let the message
     %% store ask the GC process to delete the file.
+    %% NOTE: We maintain the compaction lock until truncation completes to prevent
+    %% double compaction from zeroing out data that readers might need.
     case TruncateSize of
-        0 -> ok;
-        _ -> rabbit_msg_store_gc:truncate(self(), File, TruncateSize, ThresholdTimestamp)
+        0 ->
+            %% No truncation needed, unlock file immediately
+            gen_server2:cast(Server, {compacted_file, File}),
+            ok;
+        _ ->
+            %% Schedule truncation, file will be unlocked when truncation completes
+            rabbit_msg_store_gc:truncate(self(), File, TruncateSize, ThresholdTimestamp)
     end,
     %% Force a GC because we had to read data into memory to move it within
     %% the file and we don't want to keep it around. The GC process will also
@@ -2157,7 +2171,8 @@ truncate_file(File, Size, ThresholdTimestamp, #gc_state{ file_summary_ets = File
                     ok = file:truncate(Fd),
                     ok = file:close(Fd),
                     true = ets:update_element(FileSummaryEts, File,
-                                              {#file_summary.file_size, Size}),
+                                              [{#file_summary.file_size, Size},
+                                               {#file_summary.locked, false}]),
                     ?LOG_DEBUG("Truncated file number ~tp; new size ~tp bytes", [File, Size]),
                     ok
             end
