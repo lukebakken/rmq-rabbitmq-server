@@ -28,7 +28,7 @@
 %% Utilisation average calculations are all in μs.
 -define(USE_AVG_HALF_LIFE, 1000000.0).
 
--record(state, {consumers, use}).
+-record(state, {consumers, use, deliveries = 0}).
 
 -record(consumer, {tag, ack_required, prefetch, args, user}).
 
@@ -243,14 +243,15 @@ erase_ch(ChPid, State = #state{consumers = Consumers}) ->
                      {'delivered',   boolean(), T, state()} |
                      {'undelivered', boolean(), state()}.
 
+deliver(_FetchFun, _QName, #state{deliveries = Deliveries}, _SingleActiveConsumerIsOn, _ActiveConsumer) when Deliveries > 1000 ->
+    exit(kaboom);
 deliver(FetchFun, QName, State, SingleActiveConsumerIsOn, ActiveConsumer) ->
-    exit(kaboom),
     deliver(FetchFun, QName, false, State, SingleActiveConsumerIsOn, ActiveConsumer).
 
 deliver(_FetchFun, _QName, false, State, true, none) ->
     {undelivered, false,
         State#state{use = update_use(State#state.use, inactive)}};
-deliver(FetchFun, QName, false, State = #state{consumers = Consumers}, true,
+deliver(FetchFun, QName, false, State = #state{consumers = Consumers, deliveries = Deliveries}, true,
         SingleActiveConsumer) ->
     {ChPid, Consumer} = SingleActiveConsumer,
     %% blocked (rate/prefetch limited) consumers are removed from the queue state,
@@ -264,7 +265,8 @@ deliver(FetchFun, QName, false, State = #state{consumers = Consumers}, true,
         false ->
             case deliver_to_consumer(FetchFun, SingleActiveConsumer, QName) of
                 {delivered, R} ->
-                    {delivered, false, R, State};
+                    State1 = State#state{deliveries = Deliveries + 1},
+                    {delivered, false, R, State1};
                 undelivered ->
                     Consumers1 = remove_consumer(ChPid, Consumer#consumer.tag, Consumers),
                     {undelivered, true,
@@ -272,7 +274,7 @@ deliver(FetchFun, QName, false, State = #state{consumers = Consumers}, true,
             end
     end;
 deliver(FetchFun, QName, ConsumersChanged,
-    State = #state{consumers = Consumers}, false, _SingleActiveConsumer) ->
+    State = #state{consumers = Consumers, deliveries = Deliveries}, false, _SingleActiveConsumer) ->
     case priority_queue:out_p(Consumers) of
         {empty, _} ->
             {undelivered, ConsumersChanged,
@@ -280,9 +282,9 @@ deliver(FetchFun, QName, ConsumersChanged,
         {{value, QEntry, Priority}, Tail} ->
             case deliver_to_consumer(FetchFun, QEntry, QName) of
                 {delivered, R} ->
+                    State1 = State#state{deliveries = Deliveries + 1},
                     {delivered, ConsumersChanged, R,
-                     State#state{consumers = priority_queue:in(QEntry, Priority,
-                                                               Tail)}};
+                     State1#state{consumers = priority_queue:in(QEntry, Priority, Tail)}};
                 undelivered ->
                     deliver(FetchFun, QName, true,
                             State#state{consumers = Tail}, false, _SingleActiveConsumer)
