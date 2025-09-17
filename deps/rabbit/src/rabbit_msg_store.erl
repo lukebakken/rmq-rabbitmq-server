@@ -2015,7 +2015,8 @@ compact_file(File, FileSize,
                                  msg_store        = Server }) ->
     %% Get metadata about the file. Will be used to calculate
     %% how much data was reclaimed as a result of compaction.
-    [#file_summary{file_size = FileSize}] = ets:lookup(FileSummaryEts, File),
+    EtsLookupResult = ets:lookup(FileSummaryEts, File),
+    [#file_summary{file_size = FileSize}] = EtsLookupResult,
     %% Open the file.
     FileName = filenum_to_name(File),
     {ok, Fd} = file:open(form_filename(Dir, FileName), [read, write, binary, raw]),
@@ -2023,6 +2024,35 @@ compact_file(File, FileSize,
     %% that's OK. That means we have little to do as the file is
     %% about to be deleted.
     Messages = scan_and_vacuum_message_file(File, State),
+
+    %% NOTE: additional debugging
+    %% https://github.com/rabbitmq/rabbitmq-server/discussions/14181#discussioncomment-14431406
+    %%
+    try
+        SumFromScanning = lists:sum([Size || #msg_location{total_size = Size} <- Messages]),
+        [#file_summary{valid_total_size = ValidSize}] = EtsLookupResult,
+        if
+            SumFromScanning < ValidSize ->
+                RdqFile = form_filename(Dir, FileName),
+                RdqFileBackup = RdqFile ++ ".backup",
+                CopyResult = file:copy(RdqFile, RdqFileBackup),
+                ?LOG_DEBUG("rabbitmq-server-14181: RdqFile ~tp", [RdqFile]),
+                ?LOG_DEBUG("rabbitmq-server-14181: RdqFileBackup ~tp", [RdqFileBackup]),
+                ?LOG_DEBUG("rabbitmq-server-14181: CopyResult: ~tp", [CopyResult]),
+                ?LOG_DEBUG("rabbitmq-server-14181: SumFromScanning ~tp ValidSize ~tp", [SumFromScanning, ValidSize]),
+                ?LOG_DEBUG("rabbitmq-server-14181: EtsLookupResult ~tp", [EtsLookupResult]),
+                ?LOG_DEBUG("rabbitmq-server-14181: Messages ~tp", [Messages]),
+                ?LOG_DEBUG("rabbitmq-server-14181: sys:get_state(Server) ~tp", [sys:get_state(Server)]),
+                ok;
+            true ->
+                ok
+        end
+    catch Class:Reason:Stack ->
+        ?LOG_ERROR("rabbitmq-server-14181 ex Class: ~tp", [Class]),
+        ?LOG_ERROR("rabbitmq-server-14181 ex Reason: ~tp", [Reason]),
+        ?LOG_ERROR("~tp", [Stack])
+    end,
+
     %% Blank holes. We must do this first otherwise the file is left
     %% with data that may confuse the code (for example data that looks
     %% like a message, isn't a message, but spans over a real message).
