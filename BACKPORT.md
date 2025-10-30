@@ -7,7 +7,6 @@ f36385408a CQ shared: Fix off-by-nine error leading to lost messages
 7138e8a0cc CQ: Fix rare eof crash of message store with fanout
 6cf69e2a19 Fix CQ shared store files not deleted with large messages
 fb21a19b72 Optimise msg_store recovery in case of large message file
-968eefa1bb Bump (c) line year
 639e905aea CQ: Fix shared store scanner missing messages
 85e358642b Fix OTP-27 Dialyzer errors in rabbit
 d222a36ca2 Additional cleanup following partial FHC removal
