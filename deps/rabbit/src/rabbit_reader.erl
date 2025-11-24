@@ -204,6 +204,8 @@ force_event_refresh(Pid, Ref) ->
                          rabbit_alarm:resource_alert()) -> 'ok'.
 
 conserve_resources(PrioAlias, _Pid, Source, {_, Conserve, _}) ->
+    ?LOG_DEBUG("Sending conserve_resources with [priority] to alias ~tp (source: ~p, conserve: ~p)",
+               [PrioAlias, Source, Conserve]),
     erlang:send(PrioAlias, {conserve_resources, Source, Conserve}, [priority]),
     ok.
 
@@ -1321,6 +1323,8 @@ handle_method0(#'connection.open'{virtual_host = VHost},
 
     %% Create priority alias for control messages (requires OTP 28+)
     PrioAlias = erlang:alias([priority]),
+    ?LOG_DEBUG("Connection ~tp created priority alias ~tp (is_reference: ~tp)",
+               [self(), PrioAlias, is_reference(PrioAlias)]),
 
     %% Register self() for monitoring, but pass PrioAlias for message sending
     Alarms = rabbit_alarm:register(self(), {?MODULE, conserve_resources, [PrioAlias]}),

@@ -618,7 +618,7 @@ handle_cast({method, Method, Content, Flow},
         %% We are going to process a message from the rabbit_reader
         %% process, so here we ack it. In this case we are accessing
         %% the rabbit_channel process dictionary.
-        flow   -> 
+        flow   ->
             case ReaderPrioAlias of
                 undefined -> credit_flow:ack(Reader);
                 Alias -> credit_flow:ack(Alias, credit_flow:default_credit(), [priority])

@@ -179,11 +179,12 @@ peer_down(Peer) ->
 
 %% --------------------------------------------------------------------------
 
-grant(To, Quantity) ->
-    grant(To, Quantity, []).
-
 grant(To, Quantity, Opts) ->
     Msg = {bump_credit, {self(), Quantity}},
+    case lists:member(priority, Opts) of
+        true -> rabbit_log:debug("Sending bump_credit with [priority] to ~p", [To]);
+        false -> ok
+    end,
     case blocked() of
         false -> erlang:send(To, Msg, Opts);
         true  -> ?UPDATE(credit_deferred, [], Deferred, [{To, Msg, Opts} | Deferred])
