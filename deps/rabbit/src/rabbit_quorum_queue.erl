@@ -1122,6 +1122,20 @@ status(Vhost, QueueName) ->
                           {<<"Term">>, Term},
                           {<<"Machine Version">>, MacVer}
                          ];
+                     #{state := noproc,
+                       membership := unknown,
+                       machine_version := MacVer} ->
+                         [{<<"Node Name">>, N},
+                          {<<"Raft State">>, noproc},
+                          {<<"Membership">>, <<>>},
+                          {<<"Last Log Index">>, <<>>},
+                          {<<"Last Written">>, <<>>},
+                          {<<"Last Applied">>, <<>>},
+                          {<<"Commit Index">>, <<>>},
+                          {<<"Snapshot Index">>, <<>>},
+                          {<<"Term">>, <<>>},
+                          {<<"Machine Version">>, MacVer}
+                         ];
                      {error, _} ->
                          %% try the old method
                          case get_sys_status(ServerId) of
@@ -1150,7 +1164,7 @@ status(Vhost, QueueName) ->
                                  [{<<"Node Name">>, N},
                                   {<<"Raft State">>, Err},
                                   {<<"Membership">>, <<>>},
-                                  {<<"LastLog Index">>, <<>>},
+                                  {<<"Last Log Index">>, <<>>},
                                   {<<"Last Written">>, <<>>},
                                   {<<"Last Applied">>, <<>>},
                                   {<<"Commit Index">>, <<>>},
