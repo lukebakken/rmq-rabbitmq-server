@@ -37,9 +37,10 @@
 
 -define(DEFAULT_CREDIT, persistent_term:get(credit_flow_default_credit)).
 
--export([send/1, send/2, ack/1, ack/2, handle_bump_msg/1, blocked/0, state/0, state_delayed/1]).
+-export([send/1, send/2, ack/1, ack/2, ack/3, handle_bump_msg/1, blocked/0, state/0, state_delayed/1]).
 -export([peer_down/1]).
 -export([block/1, unblock/1]).
+-export([default_credit/0]).
 
 %%----------------------------------------------------------------------------
 
@@ -53,6 +54,7 @@
         (credit_spec()) -> 'ok'.
 -spec ack(pid()) -> 'ok'.
 -spec ack(pid(), credit_spec()) -> 'ok'.
+-spec ack(pid() | reference(), credit_spec(), list()) -> 'ok'.
 -spec handle_bump_msg(bump_msg()) -> 'ok'.
 -spec blocked() -> boolean().
 -spec peer_down(pid()) -> 'ok'.
@@ -110,6 +112,8 @@
 %% For any given pair of processes, ack/2 and send/2 must always be
 %% called with the same credit_spec().
 
+default_credit() -> ?DEFAULT_CREDIT.
+
 send(From) -> send(From, ?DEFAULT_CREDIT).
 
 send(From, {InitialCredit, _MoreCreditAfter}) ->
@@ -122,8 +126,11 @@ send(From, {InitialCredit, _MoreCreditAfter}) ->
 ack(To) -> ack(To, ?DEFAULT_CREDIT).
 
 ack(To, {_InitialCredit, MoreCreditAfter}) ->
+    ack(To, {_InitialCredit, MoreCreditAfter}, []).
+
+ack(To, {_InitialCredit, MoreCreditAfter}, Opts) ->
     ?UPDATE({credit_to, To}, MoreCreditAfter, C,
-            if C =:= 1 -> grant(To, MoreCreditAfter),
+            if C =:= 1 -> grant(To, MoreCreditAfter, Opts),
                           MoreCreditAfter;
                true    -> C - 1
             end).
@@ -173,10 +180,13 @@ peer_down(Peer) ->
 %% --------------------------------------------------------------------------
 
 grant(To, Quantity) ->
+    grant(To, Quantity, []).
+
+grant(To, Quantity, Opts) ->
     Msg = {bump_credit, {self(), Quantity}},
     case blocked() of
-        false -> To ! Msg;
-        true  -> ?UPDATE(credit_deferred, [], Deferred, [{To, Msg} | Deferred])
+        false -> erlang:send(To, Msg, Opts);
+        true  -> ?UPDATE(credit_deferred, [], Deferred, [{To, Msg, Opts} | Deferred])
     end.
 
 block(From) ->
@@ -196,8 +206,8 @@ unblock(From) ->
                 undefined ->
                     ok;
                 Credits ->
-                    lists:foreach(fun({To, Msg}) ->
-                                          To ! Msg
+                    lists:foreach(fun({To, Msg, Opts}) ->
+                                          erlang:send(To, Msg, Opts)
                                   end, Credits)
             end;
         true ->

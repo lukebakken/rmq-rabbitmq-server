@@ -53,7 +53,7 @@
 
 -export([init/3, mainloop/4, recvloop/4]).
 
--export([conserve_resources/3, server_properties/1]).
+-export([conserve_resources/4, server_properties/1]).
 
 -define(NORMAL_TIMEOUT, 3).
 -define(CLOSING_TIMEOUT, 30).
@@ -104,7 +104,9 @@
           proxy_socket,
           %% dynamic buffer
           dynamic_buffer_size = 128,
-          dynamic_buffer_moving_average = 0.0
+          dynamic_buffer_moving_average = 0.0,
+          %% priority alias for control messages (OTP 28+)
+          prio_alias
 }).
 
 -record(throttle, {
@@ -197,12 +199,12 @@ info(Pid, Items) ->
 force_event_refresh(Pid, Ref) ->
     gen_server:cast(Pid, {force_event_refresh, Ref}).
 
--spec conserve_resources(pid(),
+-spec conserve_resources(reference(), pid(),
                          rabbit_alarm:resource_alarm_source(),
                          rabbit_alarm:resource_alert()) -> 'ok'.
 
-conserve_resources(Pid, Source, {_, Conserve, _}) ->
-    Pid ! {conserve_resources, Source, Conserve},
+conserve_resources(PrioAlias, _Pid, Source, {_, Conserve, _}) ->
+    erlang:send(PrioAlias, {conserve_resources, Source, Conserve}, [priority]),
     ok.
 
 -spec server_properties(rabbit_types:protocol() | 'amqp_1_0') ->
@@ -694,11 +696,19 @@ switch_callback(State, Callback, Length) ->
     State#v1{callback = Callback, recv_len = Length}.
 
 terminate(Explanation, State) when ?IS_RUNNING(State) ->
+    cleanup_prio_alias(State),
     {normal, handle_exception(State, 0,
                               rabbit_misc:amqp_error(
                                 connection_forced, "~ts", [Explanation], none))};
 terminate(_Explanation, State) ->
+    cleanup_prio_alias(State),
     {force, State}.
+
+cleanup_prio_alias(#v1{prio_alias = PrioAlias}) ->
+    case PrioAlias of
+        undefined -> ok;
+        Alias -> erlang:unalias(Alias)
+    end.
 
 send_blocked(#v1{connection = #connection{protocol     = Protocol,
                                           capabilities = Capabilities},
@@ -959,7 +969,7 @@ create_channel(Channel,
         false ->
             {ok, _ChSupPid, {ChPid, AState}} =
                 rabbit_channel_sup_sup:start_channel(
-                  ChanSupSup, {tcp, Sock, Channel, FrameMax, self(), Name,
+                  ChanSupSup, {tcp, Sock, Channel, FrameMax, self(), State#v1.prio_alias, Name,
                                Protocol, User, VHost, Capabilities,
                                Collector}),
             MRef = erlang:monitor(process, ChPid),
@@ -1309,7 +1319,11 @@ handle_method0(#'connection.open'{virtual_host = VHost},
     NewConnection = Connection#connection{vhost = VHost},
     ok = send_on_channel0(Sock, #'connection.open_ok'{}, Protocol),
 
-    Alarms = rabbit_alarm:register(self(), {?MODULE, conserve_resources, []}),
+    %% Create priority alias for control messages (requires OTP 28+)
+    PrioAlias = erlang:alias([priority]),
+
+    %% Register self() for monitoring, but pass PrioAlias for message sending
+    Alarms = rabbit_alarm:register(self(), {?MODULE, conserve_resources, [PrioAlias]}),
     BlockedBy = sets:from_list([{resource, Alarm} || Alarm <- Alarms], [{version, 2}]),
     Throttle1 = Throttle#throttle{blocked_by = BlockedBy},
 
@@ -1319,7 +1333,8 @@ handle_method0(#'connection.open'{virtual_host = VHost},
                State#v1{connection_state    = running,
                         connection          = NewConnection,
                         channel_sup_sup_pid = ChannelSupSupPid,
-                        throttle            = Throttle1}),
+                        throttle            = Throttle1,
+                        prio_alias          = PrioAlias}),
     Infos = augment_infos_with_user_provided_connection_name(
         [{type, network} | infos(?CREATION_EVENT_KEYS, State1)],
         State1

@@ -31,7 +31,7 @@
 
 -type start_link_args() ::
         {'tcp', rabbit_net:socket(), rabbit_channel:channel_number(),
-         non_neg_integer(), pid(), string(), rabbit_types:protocol(),
+         non_neg_integer(), pid(), pid() | reference() | undefined, string(), rabbit_types:protocol(),
          rabbit_types:user(), rabbit_types:vhost(), rabbit_framing:amqp_table(),
          pid()} |
         {'direct', rabbit_channel:channel_number(), pid(), string(),
@@ -44,7 +44,7 @@
 
 -spec start_link(start_link_args()) -> {'ok', pid(), {pid(), any()}}.
 
-start_link({tcp, Sock, Channel, FrameMax, ReaderPid, ConnName, Protocol, User,
+start_link({tcp, Sock, Channel, FrameMax, ReaderPid, ReaderPrioAlias, ConnName, Protocol, User,
             VHost, Capabilities, Collector}) ->
     {ok, SupPid} = supervisor:start_link(
                      ?MODULE, {tcp, Sock, Channel, FrameMax,
@@ -52,7 +52,7 @@ start_link({tcp, Sock, Channel, FrameMax, ReaderPid, ConnName, Protocol, User,
     [LimiterPid] = rabbit_misc:find_child(SupPid, limiter),
     [WriterPid] = rabbit_misc:find_child(SupPid, writer),
     StartMFA = {rabbit_channel, start_link,
-                [Channel, ReaderPid, WriterPid, ReaderPid, ConnName,
+                [Channel, ReaderPid, ReaderPrioAlias, WriterPid, ReaderPid, ConnName,
                  Protocol, User, VHost, Capabilities, Collector,
                  LimiterPid]},
     ChildSpec = #{id => channel,
@@ -71,7 +71,7 @@ start_link({direct, Channel, ClientChannelPid, ConnPid, ConnName, Protocol,
                      ?MODULE, {direct, {ConnName, Channel}}),
     [LimiterPid] = rabbit_misc:find_child(SupPid, limiter),
     StartMFA = {rabbit_channel, start_link,
-                [Channel, ClientChannelPid, ClientChannelPid, ConnPid,
+                [Channel, ClientChannelPid, undefined, ClientChannelPid, ConnPid,
                  ConnName, Protocol, User, VHost, Capabilities, Collector,
                  LimiterPid, AmqpParams]},
     ChildSpec = #{id => channel,

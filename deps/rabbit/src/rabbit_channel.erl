@@ -48,7 +48,7 @@
 
 -behaviour(gen_server2).
 
--export([start_link/11, start_link/12, do/2, do/3, do_flow/3, flush/1, shutdown/1]).
+-export([start_link/11, start_link/12, start_link/13, do/2, do/3, do_flow/3, flush/1, shutdown/1]).
 -export([send_command/2]).
 -export([list/0, info_keys/0, info/1, info/2, info_all/0, info_all/1,
          emit_info_all/4, info_local/1]).
@@ -85,6 +85,8 @@
           channel,
           %% reader process
           reader_pid,
+          %% reader priority alias for control messages
+          reader_prio_alias,
           %% writer process
           writer_pid,
           %%
@@ -250,19 +252,30 @@
 
 start_link(Channel, ReaderPid, WriterPid, ConnPid, ConnName, Protocol, User,
            VHost, Capabilities, CollectorPid, Limiter) ->
-    start_link(Channel, ReaderPid, WriterPid, ConnPid, ConnName, Protocol, User,
+    start_link(Channel, ReaderPid, undefined, WriterPid, ConnPid, ConnName, Protocol, User,
            VHost, Capabilities, CollectorPid, Limiter, undefined).
 
 -spec start_link
-        (channel_number(), pid(), pid(), pid(), string(), rabbit_types:protocol(),
+        (channel_number(), pid(), pid() | reference() | undefined, pid(), pid(), string(), rabbit_types:protocol(),
+         rabbit_types:user(), rabbit_types:vhost(), rabbit_framing:amqp_table(),
+         pid(), pid()) ->
+            rabbit_types:ok_pid_or_error().
+
+start_link(Channel, ReaderPid, ReaderPrioAlias, WriterPid, ConnPid, ConnName, Protocol, User,
+           VHost, Capabilities, CollectorPid, Limiter) ->
+    start_link(Channel, ReaderPid, ReaderPrioAlias, WriterPid, ConnPid, ConnName, Protocol, User,
+           VHost, Capabilities, CollectorPid, Limiter, undefined).
+
+-spec start_link
+        (channel_number(), pid(), pid() | reference() | undefined, pid(), pid(), string(), rabbit_types:protocol(),
          rabbit_types:user(), rabbit_types:vhost(), rabbit_framing:amqp_table(),
          pid(), pid(), any()) ->
             rabbit_types:ok_pid_or_error().
 
-start_link(Channel, ReaderPid, WriterPid, ConnPid, ConnName, Protocol, User,
+start_link(Channel, ReaderPid, ReaderPrioAlias, WriterPid, ConnPid, ConnName, Protocol, User,
            VHost, Capabilities, CollectorPid, Limiter, AmqpParams) ->
     gen_server2:start_link(
-      ?MODULE, [Channel, ReaderPid, WriterPid, ConnPid, ConnName, Protocol,
+      ?MODULE, [Channel, ReaderPid, ReaderPrioAlias, WriterPid, ConnPid, ConnName, Protocol,
                 User, VHost, Capabilities, CollectorPid, Limiter, AmqpParams], []).
 
 -spec do(pid(), rabbit_framing:amqp_method_record()) -> 'ok'.
@@ -436,7 +449,7 @@ update_user_state(Pid, UserState) when is_pid(Pid) ->
 
 %%---------------------------------------------------------------------------
 
-init([Channel, ReaderPid, WriterPid, ConnPid, ConnName, Protocol, User, VHost,
+init([Channel, ReaderPid, ReaderPrioAlias, WriterPid, ConnPid, ConnName, Protocol, User, VHost,
       Capabilities, CollectorPid, LimiterPid, AmqpParams]) ->
     process_flag(trap_exit, true),
     rabbit_process_flag:adjust_for_message_handling_proc(),
@@ -474,6 +487,7 @@ init([Channel, ReaderPid, WriterPid, ConnPid, ConnName, Protocol, User, VHost,
                             protocol = Protocol,
                             channel = Channel,
                             reader_pid = ReaderPid,
+                            reader_prio_alias = ReaderPrioAlias,
                             writer_pid = WriterPid,
                             conn_pid = ConnPid,
                             conn_name = ConnName,
@@ -597,13 +611,18 @@ handle_call(_Request, _From, State) ->
     noreply(State).
 
 handle_cast({method, Method, Content, Flow},
-            State = #ch{cfg = #conf{reader_pid = Reader},
+            State = #ch{cfg = #conf{reader_pid = Reader,
+                                    reader_prio_alias = ReaderPrioAlias},
                         interceptor_state = IState}) ->
     case Flow of
         %% We are going to process a message from the rabbit_reader
         %% process, so here we ack it. In this case we are accessing
         %% the rabbit_channel process dictionary.
-        flow   -> credit_flow:ack(Reader);
+        flow   -> 
+            case ReaderPrioAlias of
+                undefined -> credit_flow:ack(Reader);
+                Alias -> credit_flow:ack(Alias, credit_flow:default_credit(), [priority])
+            end;
         noflow -> ok
     end,
     try handle_method(rabbit_channel_interceptor:intercept_in(
