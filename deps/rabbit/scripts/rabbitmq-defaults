@@ -9,10 +9,13 @@
 ### next line potentially updated in package install steps
 SYS_PREFIX=
 
+# shellcheck disable=SC2034
 CLEAN_BOOT_FILE=start_clean
+# shellcheck disable=SC2034
 SASL_BOOT_FILE=start_sasl
+# shellcheck disable=SC2034
 BOOT_MODULE="rabbit"
 
-if test -z "$CONF_ENV_FILE" && test -z "$RABBITMQ_CONF_ENV_FILE"; then
-    CONF_ENV_FILE=${SYS_PREFIX}/etc/rabbitmq/rabbitmq-env.conf
+if [ -z "$CONF_ENV_FILE" ] && [ -z "$RABBITMQ_CONF_ENV_FILE" ]; then
+    CONF_ENV_FILE="${SYS_PREFIX}/etc/rabbitmq/rabbitmq-env.conf"
 fi

@@ -11,18 +11,21 @@ set -e
 
 # Get default settings with user overrides for (RABBITMQ_)<var_name>
 # Non-empty defaults should be set in rabbitmq-env
-SCRIPTS_DIR=$(dirname "$0")
-. "$SCRIPTS_DIR/rabbitmq-env"
+scripts_dir="$(dirname "$0")"
+readonly scripts_dir
+
+# shellcheck source=rabbitmq-env
+. "$scripts_dir/rabbitmq-env"
 
 [ "$NOTIFY_SOCKET" ] && RUNNING_UNDER_SYSTEMD=true
 
 for opt in "$@"; do
     if [ "$opt" = "-detached" ]; then
-        detached="true"
+        readonly detached="true"
     fi
 done
 
-RABBITMQ_DEFAULT_ALLOC_ARGS="+MBas ageffcbf +MHas ageffcbf +MBlmbcs 512 +MHlmbcs 512 +MMmcs 30"
+readonly default_alloc_args="+MBas ageffcbf +MHas ageffcbf +MBlmbcs 512 +MHlmbcs 512 +MMmcs 30"
 
 check_start_params() {
     check_not_empty RABBITMQ_BOOT_MODULE
@@ -30,12 +33,11 @@ check_start_params() {
 }
 
 check_not_empty() {
-    local name="${1:?}"
-    local value
-    eval value=\$$name
+    readonly name="${1:?}"
+    eval value=\$"$name"
     if [ -z "$value" ]; then
         echo "Error: ENV variable should be defined: $1.
-       Please check rabbitmq-env, rabbitmq-defaults, and ${RABBITMQ_CONF_ENV_FILE} script files"
+       Please check rabbitmq-env, rabbitmq-defaults, and $RABBITMQ_CONF_ENV_FILE script files"
         exit 78
     fi
 }
@@ -46,27 +48,32 @@ start_rabbitmq_server() {
     _rmq_env_set_erl_libs
 
     if [ -n "$RABBITMQ_MAX_OPEN_FILES" ]; then
-        if ! ulimit -n ${RABBITMQ_MAX_OPEN_FILES}; then
-            echo "Error: Failed to set maximum number of open files to ${RABBITMQ_MAX_OPEN_FILES}" >&2
+        # shellcheck disable=SC3045
+        if ! ulimit -n "$RABBITMQ_MAX_OPEN_FILES"; then
+            echo "Error: Failed to set maximum number of open files to $RABBITMQ_MAX_OPEN_FILES" >&2
             exit 1
         fi
     fi
 
-    RABBITMQ_START_RABBIT=
-    [ "x" = "x$RABBITMQ_ALLOW_INPUT" ] && RABBITMQ_START_RABBIT=" -noinput"
-    if test -z "$RABBITMQ_NODE_ONLY"; then
-        if test "$USE_RABBIT_BOOT_SCRIPT"; then
+    start_rabbit_args=
+    [ -z "$RABBITMQ_ALLOW_INPUT" ] && start_rabbit_args="-noinput"
+    if [ -z "$RABBITMQ_NODE_ONLY" ]; then
+        if [ -n "$USE_RABBIT_BOOT_SCRIPT" ]; then
             # TODO: This is experimental and undocumented at this point.
             # It is here just to do simple checks while playing with how
             # RabbitMQ is started.
-            "$SCRIPTS_DIR/rabbitmq-rel" gen-boot
+            "$scripts_dir/rabbitmq-rel" gen-boot
             SASL_BOOT_FILE=rabbit
-            test -f "$SASL_BOOT_FILE.boot"
-            RABBITMQ_START_RABBIT="$RABBITMQ_START_RABBIT -init_debug"
+            if [ ! -f "$SASL_BOOT_FILE.boot" ]; then
+                echo "Error: Failed to find boot file $SASL_BOOT_FILE.boot" >&2
+                exit 1
+            fi
+            start_rabbit_args="$start_rabbit_args -init_debug"
         else
-            RABBITMQ_START_RABBIT="$RABBITMQ_START_RABBIT -s $RABBITMQ_BOOT_MODULE boot"
+            start_rabbit_args="$start_rabbit_args -s $RABBITMQ_BOOT_MODULE boot"
         fi
     fi
+    readonly start_rabbit_args
 
     # We need to turn off path expansion because some of the vars,
     # notably RABBITMQ_SERVER_ERL_ARGS, contain terms that look like
@@ -78,15 +85,16 @@ start_rabbitmq_server() {
 
     check_start_params
 
+    # shellcheck disable=SC2086
     exec erl \
         -pa "$RABBITMQ_SERVER_CODE_PATH" \
-        ${RABBITMQ_START_RABBIT} \
-        -boot "${SASL_BOOT_FILE}" \
+        $start_rabbit_args \
+        -boot "$SASL_BOOT_FILE" \
         +W w \
-        ${RABBITMQ_DEFAULT_ALLOC_ARGS} \
-        ${RABBITMQ_SERVER_ERL_ARGS} \
-        ${RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS} \
-        ${RABBITMQ_SERVER_START_ARGS} \
+        $default_alloc_args \
+        $RABBITMQ_SERVER_ERL_ARGS \
+        $RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS \
+        $RABBITMQ_SERVER_START_ARGS \
         -syslog logger '[]' \
         -syslog syslog_error_logger false \
         -kernel prevent_overlapping_partitions false \
@@ -94,7 +102,7 @@ start_rabbitmq_server() {
 }
 
 stop_rabbitmq_server() {
-    if test "$rabbitmq_server_pid"; then
+    if [ -f "$rabbitmq_server_pid" ]; then
         kill -TERM "$rabbitmq_server_pid"
         wait "$rabbitmq_server_pid"
     fi
@@ -117,7 +125,7 @@ else
     # disabled, we setup signal handlers to stop RabbitMQ properly. This
     # is at least useful in the case of Docker.
     # The Erlang VM should ignore SIGINT.
-    RABBITMQ_SERVER_START_ARGS="${RABBITMQ_SERVER_START_ARGS} ${RABBITMQ_IGNORE_SIGINT_FLAG}"
+    RABBITMQ_SERVER_START_ARGS="$RABBITMQ_SERVER_START_ARGS $RABBITMQ_IGNORE_SIGINT_FLAG"
 
     # Signal handlers. They all stop RabbitMQ properly, using
     # rabbitmqctl stop. This script will exit with different exit codes:
