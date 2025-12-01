@@ -33,7 +33,7 @@ check_start_params() {
 }
 
 check_not_empty() {
-    readonly name="${1:?}"
+    name="${1:?}"
     eval value=\$"$name"
     if [ -z "$value" ]; then
         echo "Error: ENV variable should be defined: $1.
