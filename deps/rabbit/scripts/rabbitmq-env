@@ -19,21 +19,21 @@ if [ -z "$RABBITMQ_SCRIPTS_DIR" ]; then
     _script_path="$0"
     while [ -h "$_script_path" ]; do
         # Determine if readlink -f is supported at all. TODO clean this up.
-        _full_path="$(readlink -f $_script_path 2>/dev/null)"
-        if [ "$?" != "0" ]; then
-          _rel_path="$(readlink $_script_path)"
+        if _full_path="$(readlink -f "$_script_path" 2>/dev/null)"; then
+          _rel_path="$(readlink "$_script_path")"
           if expr "$_rel_path" : '/.*' > /dev/null; then
             _script_path="$_rel_path"
           else
             _script_path="$(dirname "$_script_path")/$_rel_path"
           fi
         else
-          _script_path=$_full_path
+          _script_path="$_full_path"
         fi
     done
     set -e
 
-    RABBITMQ_SCRIPTS_DIR=`dirname $_script_path`
+    RABBITMQ_SCRIPTS_DIR="$(dirname "$_script_path")"
+    export RABBITMQ_SCRIPTS_DIR
 
     unset _script_path
     unset _full_path
@@ -80,18 +80,21 @@ rmq_realpath() {
     if [ -d "$_rmq_path" ]; then
         cd "$_rmq_path" && pwd
     elif [ -f "$_rmq_path" ]; then
-        cd "$(dirname "$_rmq_path")" && echo $(pwd)/$(basename "$_rmq_path")
+        cd "$(dirname "$_rmq_path")" && echo "$(pwd)/$(basename "$_rmq_path")"
     else
         echo "$_rmq_path"
     fi
     unset _rmq_path
 }
 
-RABBITMQ_HOME="$(rmq_realpath "${RABBITMQ_SCRIPTS_DIR}/..")"
-ESCRIPT_DIR="${RABBITMQ_HOME}/escript"
+RABBITMQ_HOME="$(rmq_realpath "$RABBITMQ_SCRIPTS_DIR/..")"
+export RABBITMQ_HOME
+
+export ESCRIPT_DIR="$RABBITMQ_HOME/escript"
 
 ## Set defaults
-. ${RABBITMQ_SCRIPTS_DIR}/rabbitmq-defaults
+# shellcheck source=rabbitmq-defaults
+. "$RABBITMQ_SCRIPTS_DIR/rabbitmq-defaults"
 
 # We save the current value of $RABBITMQ_PID_FILE in case it was set by
 # an init script. If $CONF_ENV_FILE overrides it again, we must ignore
@@ -101,7 +104,8 @@ saved_RABBITMQ_PID_FILE="$RABBITMQ_PID_FILE"
 ## Get configuration variables from the configure environment file
 [ -z "$RABBITMQ_CONF_ENV_FILE" ] && RABBITMQ_CONF_ENV_FILE="$CONF_ENV_FILE"
 if [ -f "$RABBITMQ_CONF_ENV_FILE" ]; then
-    CONF_ENV_FILE_PHASE=rabbitmq-env
+    export CONF_ENV_FILE_PHASE=rabbitmq-env
+    # shellcheck source=/dev/null
     . "$RABBITMQ_CONF_ENV_FILE" || true
 fi
 
@@ -148,14 +152,14 @@ SERVER_ERL_ARGS="+pc unicode +P $RABBITMQ_MAX_NUMBER_OF_PROCESSES +t $RABBITMQ_M
 [ -z "$RABBITMQ_CTL_DIST_PORT_MIN" ] && RABBITMQ_CTL_DIST_PORT_MIN="$CTL_DIST_PORT_MIN"
 [ -z "$RABBITMQ_CTL_DIST_PORT_MAX" ] && RABBITMQ_CTL_DIST_PORT_MAX="$CTL_DIST_PORT_MAX"
 [ -z "$RABBITMQ_CTL_DIST_PORT_MIN" ] && RABBITMQ_CTL_DIST_PORT_MIN='35672'
-[ -z "$RABBITMQ_CTL_DIST_PORT_MAX" ] && RABBITMQ_CTL_DIST_PORT_MAX="$(($RABBITMQ_CTL_DIST_PORT_MIN + 10))"
+[ -z "$RABBITMQ_CTL_DIST_PORT_MAX" ] && RABBITMQ_CTL_DIST_PORT_MAX="$((RABBITMQ_CTL_DIST_PORT_MIN + 10))"
 
 [ -z "$RABBITMQ_SERVER_ERL_ARGS" ] && RABBITMQ_SERVER_ERL_ARGS=${SERVER_ERL_ARGS}
 [ -z "$RABBITMQ_SERVER_START_ARGS" ] && RABBITMQ_SERVER_START_ARGS=${SERVER_START_ARGS}
 [ -z "$RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS" ] && RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS=${SERVER_ADDITIONAL_ERL_ARGS}
 [ -z "$RABBITMQ_SERVER_CODE_PATH" ] && RABBITMQ_SERVER_CODE_PATH=${SERVER_CODE_PATH}
 [ -z "$RABBITMQ_IGNORE_SIGINT" ] && RABBITMQ_IGNORE_SIGINT="true"
-[ "true" = "$RABBITMQ_IGNORE_SIGINT" ] && RABBITMQ_IGNORE_SIGINT_FLAG="+B i"
+[ "$RABBITMQ_IGNORE_SIGINT" = "true" ] && export RABBITMQ_IGNORE_SIGINT_FLAG="+B i"
 
 if [ -n "$saved_RABBITMQ_PID_FILE" ] && \
     [ "$saved_RABBITMQ_PID_FILE" != "$RABBITMQ_PID_FILE" ]
