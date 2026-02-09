@@ -30,6 +30,10 @@
 %% Shared with rabbit_classic_queue_store_v2.
 -export([queue_dir/2]).
 
+%% Used to format the state and summarize large amounts of data in
+%% the state.
+-export([format_state/1]).
+
 %% Internal. Used by tests.
 -export([segment_file/2]).
 
@@ -82,7 +86,11 @@
     %% If not, write everything. This allows the reader
     %% to continue reading from memory if it is fast
     %% enough to keep up with the producer.
-    write_buffer = #{} :: #{rabbit_variable_queue:seq_id() => entry() | ack},
+    %%
+    %% Note that the list type is only for when this state is
+    %% formatted as part of a crash dump.
+    write_buffer = #{} :: #{rabbit_variable_queue:seq_id() => entry() | ack} |
+                   list(rabbit_variable_queue:seq_id()),
 
     %% The number of entries in the write buffer that
     %% refer to an update to the file, rather than a
@@ -101,7 +109,11 @@
     %% replaces the cache entirely. When only acks are flushed,
     %% then the cache gets updated: old acks are removed and
     %% new acks are added to the cache.
-    cache = #{} :: #{rabbit_variable_queue:seq_id() => entry() | ack},
+    %%
+    %% Note that the list type is only for when this state is
+    %% formatted as part of a crash dump.
+    cache = #{} :: #{rabbit_variable_queue:seq_id() => entry() | ack} |
+                   list(rabbit_variable_queue:seq_id()),
 
     %% Messages waiting for publisher confirms. The
     %% publisher confirms will be sent when the message
@@ -112,7 +124,10 @@
     %% and there are outstanding unconfirmed messages.
     %% In that case the buffer is flushed to disk when
     %% the queue requests a sync (after a timeout).
-    confirms = sets:new([{version,2}]) :: sets:set(),
+    %%
+    %% Note that the binary type is only for when this state is
+    %% formatted as part of a crash dump.
+    confirms = sets:new([{version,2}]) :: sets:set() | binary(),
 
     %% Segments we currently know of along with the
     %% number of unacked messages remaining in the
@@ -196,9 +211,10 @@ init_for_conversion(#resource{ virtual_host = VHost } = Name, OnSyncFun, OnSyncM
 
 init1(Name, Dir, OnSyncFun, OnSyncMsgFun) ->
     ensure_queue_name_stub_file(Name, Dir),
+    DirBin = rabbit_file:filename_to_binary(Dir),
     #qi{
         queue_name = Name,
-        dir = rabbit_file:filename_to_binary(Dir),
+        dir = << DirBin/binary, "/" >>,
         on_sync = OnSyncFun,
         on_sync_msg = OnSyncMsgFun
     }.
@@ -1277,8 +1293,8 @@ queue_name_to_dir_name(#resource { kind = queue,
     rabbit_misc:format("~.36B", [Num]).
 
 segment_file(Segment, #qi{ dir = Dir }) ->
-    filename:join(rabbit_file:binary_to_filename(Dir),
-                  integer_to_list(Segment) ++ ?SEGMENT_EXTENSION).
+    N = integer_to_binary(Segment),
+    <<Dir/binary, N/binary, ?SEGMENT_EXTENSION>>.
 
 highest_continuous_seq_id([SeqId|Tail], EndSeqId)
         when (1 + SeqId) =:= EndSeqId ->
@@ -1299,3 +1315,17 @@ write_file_and_ensure_dir(Name, IOData) ->
             end;
          Err -> Err
     end.
+
+-spec format_state(State) -> State when State::state().
+
+format_state(#qi{write_buffer = WriteBuffer,
+                 cache = Cache,
+                 confirms = Confirms} = S) ->
+    ConfirmsSize = sets:size(Confirms),
+    S#qi{write_buffer = maps:keys(WriteBuffer),
+         cache = maps:keys(Cache),
+         confirms = format_state_element(confirms, ConfirmsSize)}.
+
+format_state_element(Element, Size) when is_atom(Element), is_integer(Size) ->
+    rabbit_data_coercion:to_utf8_binary(
+        io_lib:format("~tp (~b elements) (truncated)", [Element, Size])).

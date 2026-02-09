@@ -34,7 +34,8 @@
          handle_pre_hibernate/1, resume/1, msg_rates/1,
          info/2, invoke/3, is_duplicate/2, set_queue_mode/2,
          set_queue_version/2,
-         zip_msgs_and_acks/4]).
+         zip_msgs_and_acks/4,
+         format_state/1]).
 
 -record(state, {bq, bqss, max_priority}).
 -record(passthrough, {bq, bqs}).
@@ -721,3 +722,16 @@ zip_msgs_and_acks(Pubs, AckTags) ->
               Id = mc:get_annotation(id, Msg),
               {Id, AckTag}
       end, Pubs, AckTags).
+
+format_state(State = #state{bq = BQ, bqss = BQSs0}) when is_list(BQSs0) ->
+    case erlang:function_exported(BQ, format_state, 1) of
+        true ->
+            BQSs1 = foreach1(fun (_Priority, BQSN) ->
+                                     BQ:format_state(BQSN)
+                             end, State),
+            State#state{bqss = BQSs1};
+        _ ->
+            State#state{bqss = bqss_truncated}
+    end;
+format_state(State = #passthrough{bq = BQ, bqs = BQS}) ->
+    ?passthrough1(format_state(BQS)).
