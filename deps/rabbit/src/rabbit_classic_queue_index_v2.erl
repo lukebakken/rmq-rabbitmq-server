@@ -619,7 +619,9 @@ publish(MsgId, SeqId, Location, Props, IsPersistent, ShouldConfirm, TargetRamCou
 new_segment_file(Segment, SegmentEntryCount, State = #qi{ segments = Segments }) ->
     #qi{ fds = OpenFds } = reduce_fd_usage(Segment, State),
     false = maps:is_key(Segment, OpenFds), %% assert
-    {ok, Fd} = file:open(segment_file(Segment, State), [read, write, raw, binary]),
+    {ok, Fd} = rabbit_file:open_eventually(
+        segment_file(Segment, State),
+        [read, write, raw, binary]),
     %% We then write the segment file header. It contains
     %% some useful info and some reserved bytes for future use.
     %% We currently do not make use of this information. It is
@@ -736,7 +738,6 @@ flush_buffer(State0 = #qi { write_buffer = WriteBuffer0,
         {Fd, FoldState} = get_fd_for_segment(Segment, FoldState1),
         LocBytes = flush_buffer_consolidate(lists:sort(LocBytes0), 1),
         ok = file:pwrite(Fd, LocBytes),
-        file_handle_cache_stats:update(queue_index_write),
         FoldState
     end, State0, Writes),
     %% Update the cache. If we are flushing the entire write buffer,
@@ -999,7 +1000,6 @@ read_from_disk(SeqIdsToRead0, State0 = #qi{ write_buffer = WriteBuffer }, Acc0) 
     ReadSize = (LastSeqId - FirstSeqId + 1) * ?ENTRY_SIZE,
     case get_fd(FirstSeqId, State0) of
         {Fd, OffsetForSeqId, State} ->
-            file_handle_cache_stats:update(queue_index_read),
             %% When reading further than the end of a partial file,
             %% file:pread/3 will return what it could read.
             case file:pread(Fd, OffsetForSeqId, ReadSize) of
@@ -1142,8 +1142,11 @@ queue_index_walker({next, Gatherer}) when is_pid(Gatherer) ->
         empty ->
             ok = gatherer:stop(Gatherer),
             finished;
+        %% From v1 index walker. @todo Remove when no longer possible to convert from v1.
         {value, {MsgId, Count}} ->
-            {MsgId, Count, {next, Gatherer}}
+            {MsgId, Count, {next, Gatherer}};
+        {value, MsgIds} ->
+            {MsgIds, {next, Gatherer}}
     end.
 
 queue_index_walker_reader(#resource{ virtual_host = VHost } = Name, Gatherer) ->
@@ -1170,27 +1173,30 @@ queue_index_walker_segment(F, Gatherer) ->
         {ok, <<?MAGIC:32,?VERSION:8,
                FromSeqId:64/unsigned,ToSeqId:64/unsigned,
                _/bits>>} ->
-            queue_index_walker_segment(Fd, Gatherer, 0, ToSeqId - FromSeqId);
+            queue_index_walker_segment(Fd, Gatherer, 0, ToSeqId - FromSeqId, []);
         _ ->
             %% Invalid segment file. Skip.
             ok
     end,
     ok = file:close(Fd).
 
-queue_index_walker_segment(_, _, N, N) ->
+queue_index_walker_segment(_, Gatherer, N, N, Acc) ->
     %% We reached the end of the segment file.
+    gatherer:sync_in(Gatherer, Acc),
     ok;
-queue_index_walker_segment(Fd, Gatherer, N, Total) ->
+queue_index_walker_segment(Fd, Gatherer, N, Total, Acc) ->
     case file:read(Fd, ?ENTRY_SIZE) of
         %% We found a non-ack persistent entry. Gather it.
         {ok, <<1,_:7,1:1,_,1,Id:16/binary,_/bits>>} ->
-            gatherer:sync_in(Gatherer, {Id, 1}),
-            queue_index_walker_segment(Fd, Gatherer, N + 1, Total);
+            queue_index_walker_segment(Fd, Gatherer, N + 1, Total, [Id|Acc]);
         %% We found an ack, a transient entry or a non-entry. Skip it.
         {ok, _} ->
-            queue_index_walker_segment(Fd, Gatherer, N + 1, Total);
+            queue_index_walker_segment(Fd, Gatherer, N + 1, Total, Acc);
         %% We reached the end of a partial segment file.
+        eof when Acc =:= [] ->
+            ok;
         eof ->
+            gatherer:sync_in(Gatherer, Acc),
             ok
     end.
 
