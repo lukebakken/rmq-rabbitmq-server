@@ -7,6 +7,8 @@
 
 -module(rabbit_web_dispatch_registry).
 
+-include_lib("rabbit_common/include/rabbit.hrl").
+
 -behaviour(gen_server).
 
 -export([start_link/0]).
@@ -27,10 +29,10 @@ start_link() ->
 
 add(Name, Listener, Selector, Handler, Link) ->
     gen_server:call(?MODULE, {add, Name, Listener, Selector, Handler, Link},
-                    infinity).
+                    ?GEN_SERVER_CALL_TIMEOUT).
 
 remove(Name) ->
-    gen_server:call(?MODULE, {remove, Name}, infinity).
+    gen_server:call(?MODULE, {remove, Name}, ?GEN_SERVER_CALL_TIMEOUT).
 
 %% @todo This needs to be dispatch instead of a fun too.
 %% But I'm not sure what code is using this.
@@ -53,7 +55,7 @@ lookup(Listener, Req) ->
 %% This is called in a somewhat obfuscated manner in
 %% rabbit_mgmt_external_stats:rabbit_web_dispatch_registry_list_all()
 list_all() ->
-    gen_server:call(?MODULE, list_all, infinity).
+    gen_server:call(?MODULE, list_all, ?GEN_SERVER_CALL_TIMEOUT).
 
 %% Callback Methods
 
