@@ -1081,8 +1081,28 @@ user_definition(User) ->
       <<"limits">>            => internal_user:get_limits(User)
     }.
 
+%% Internal runtime parameter components that must not appear in
+%% exported definitions. These are implementation details, not
+%% user-defined parameters.
+%%
+%% If you add a new internal runtime parameter component, you MUST
+%% add it to this list. See also:
+%%   - rabbit_exchange_parameters (exchange-delete-in-progress)
+%%   - rabbit_definitions_hashing (imported_definition_hash_value)
+-define(INTERNAL_RUNTIME_PARAMETER_COMPONENTS, [
+    ?EXCHANGE_DELETE_IN_PROGRESS_COMPONENT,
+    ?IMPORTED_DEFINITION_HASH_COMPONENT
+]).
+
 list_runtime_parameters() ->
-    [runtime_parameter_definition(P) || P <- rabbit_runtime_parameters:list(), is_list(P)].
+    [runtime_parameter_definition(P)
+     || P <- rabbit_runtime_parameters:list(),
+        is_list(P),
+        not is_internal_runtime_parameter(P)].
+
+is_internal_runtime_parameter(Param) ->
+    lists:member(pget(component, Param),
+                 ?INTERNAL_RUNTIME_PARAMETER_COMPONENTS).
 
 runtime_parameter_definition(Param) ->
     #{
@@ -1094,10 +1114,10 @@ runtime_parameter_definition(Param) ->
 
 maybe_map(Value) ->
     %% Not all definitions are maps. `federation-upstream-set` is
-    %% a list of maps, and it should be exported as it has been
-    %% imported
+    %% a list of maps. We also need to recursively convert nested
+    %% proplists to maps (e.g. policy and operator policy definitions).
     try
-        rabbit_data_coercion:to_map(Value)
+        rabbit_data_coercion:to_map_recursive(Value)
     catch
         error:badarg ->
             Value
