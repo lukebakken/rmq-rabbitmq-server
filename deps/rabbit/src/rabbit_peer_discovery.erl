@@ -112,12 +112,12 @@ maybe_init() ->
     _ = code:ensure_loaded(Backend),
     case erlang:function_exported(Backend, init, 0) of
         true  ->
-            ?LOG_DEBUG(
+            ?LOG_INFO(
                "Peer discovery: backend supports initialisation",
                #{domain => ?RMQLOG_DOMAIN_PEER_DISC}),
             case Backend:init() of
                 ok ->
-                    ?LOG_DEBUG(
+                    ?LOG_INFO(
                        "Peer discovery: backend initialisation succeeded",
                        #{domain => ?RMQLOG_DOMAIN_PEER_DISC}),
                     ok;
@@ -129,7 +129,7 @@ maybe_init() ->
                     ok
             end;
         false ->
-            ?LOG_DEBUG(
+            ?LOG_INFO(
                "Peer discovery: backend does not support initialisation",
                #{domain => ?RMQLOG_DOMAIN_PEER_DISC}),
             ok
@@ -180,7 +180,7 @@ sync_desired_cluster(Backend, RetriesLeft, RetryDelay) ->
     %%      ready, we retry the whole process.
     case discover_cluster_nodes(Backend) of
         {ok, {[ThisNode], _NodeType}} when ThisNode =:= node() ->
-            ?LOG_DEBUG(
+            ?LOG_INFO(
                "Peer discovery: no nodes to cluster with according to "
                "backend; proceeding as a standalone node",
                #{domain => ?RMQLOG_DOMAIN_PEER_DISC}),
@@ -189,7 +189,7 @@ sync_desired_cluster(Backend, RetriesLeft, RetryDelay) ->
             NodeAlreadySelected = is_atom(DiscoveredNodes),
             NodesAndProps = case NodeAlreadySelected of
                                 true ->
-                                    ?LOG_DEBUG(
+                                    ?LOG_INFO(
                                        "Peer discovery: node '~ts' already "
                                        "selected by backend",
                                        [DiscoveredNodes],
@@ -248,7 +248,7 @@ sync_desired_cluster(Backend, RetriesLeft, RetryDelay) ->
 retry_sync_desired_cluster(Backend, RetriesLeft, RetryDelay)
   when RetriesLeft > 0 ->
     RetriesLeft1 = RetriesLeft - 1,
-    ?LOG_DEBUG(
+    ?LOG_INFO(
        "Peer discovery: retrying to create/sync cluster in ~b ms "
        "(~b attempts left)",
        [RetryDelay, RetriesLeft1],
@@ -291,7 +291,7 @@ discover_cluster_nodes(Backend) ->
     %% type is valid. Nodes availability and inter-node compatibility are
     %% taken care of later.
     Ret = Backend:list_nodes(),
-    ?LOG_DEBUG(
+    ?LOG_INFO(
        "Peer discovery: backend returned the following configuration:~n"
        "  ~tp",
        [Ret],
@@ -430,11 +430,11 @@ query_node_props(Nodes) when Nodes =/= [] ->
                        _ ->
                            PeerStartArg0
                    end,
-    ?LOG_DEBUG("Peer discovery: peer node arguments: ~tp",
+    ?LOG_INFO("Peer discovery: peer node arguments: ~tp",
                [PeerStartArg]),
     case peer:start(PeerStartArg) of
         {ok, Pid, Peer} ->
-            ?LOG_DEBUG(
+            ?LOG_INFO(
                "Peer discovery: using temporary hidden node '~ts' to query "
                "discovered peers properties",
                [Peer],
@@ -640,7 +640,7 @@ query_node_props1(
     %% We consider that an error means the remote node is unreachable or not
     %% ready. Therefore, we exclude it from the list of discovered nodes as we
     %% won't be able to join it anyway.
-    ?LOG_DEBUG(
+    ?LOG_INFO(
        "Peer discovery: failed to query cluster members of node '~ts': ~0tp~n"
        "Peer discovery: node '~ts' excluded from the discovered nodes",
        [Node, Error, Node],
@@ -667,7 +667,7 @@ query_node_props2([{Node, Members} | Rest], NodesAndProps, ProxyGroupLeader) ->
             %% there is something wrong with the remote node because it
             %% doesn't depend on RabbitMQ. We exclude it from the discovered
             %% nodes.
-            ?LOG_DEBUG(
+            ?LOG_INFO(
                "Peer discovery: failed to query start time of node '~ts': "
                "~0tp~n"
                "Peer discovery: node '~ts' excluded from the discovered nodes",
@@ -786,7 +786,7 @@ sort_nodes_and_props(NodesAndProps) ->
                                 StartTimeA =:= StartTimeB andalso
                                 NodeA =< NodeB)
                        end, NodesAndProps),
-    ?LOG_DEBUG(
+    ?LOG_INFO(
        lists:flatten(
          ["Peer discovery: sorted list of nodes and their properties "
           "considered to create/sync the cluster:"] ++
@@ -827,7 +827,7 @@ can_use_discovered_nodes(DiscoveredNodes, NodesAndProps)
         true ->
             ok;
         false ->
-            ?LOG_DEBUG(
+            ?LOG_INFO(
                "Peer discovery: not satisfyied with discovered peers: the "
                "list does not contain this node",
                #{domain => ?RMQLOG_DOMAIN_PEER_DISC})
@@ -844,7 +844,7 @@ can_use_discovered_nodes(DiscoveredNodes, NodesAndProps)
         true ->
             ok;
         false ->
-            ?LOG_DEBUG(
+            ?LOG_INFO(
                "Peer discovery: not satisfyied with discovered peers: the "
                "list should contain at least two nodes with a configured "
                "cluster size hint of ~b nodes",
@@ -913,33 +913,33 @@ select_node_to_join([{Node, _Members, _StartTime, false} | _]) ->
 %% @private
 
 join_selected_node(_Backend, ThisNode, _NodeType) when ThisNode =:= node() ->
-    ?LOG_DEBUG(
+    ?LOG_INFO(
        "Peer discovery: the selected node is this node; proceed with boot",
        #{domain => ?RMQLOG_DOMAIN_PEER_DISC}),
     ok;
 join_selected_node(Backend, SelectedNode, NodeType) ->
-    ?LOG_DEBUG(
+    ?LOG_INFO(
        "Peer discovery: trying to acquire lock",
        #{domain => ?RMQLOG_DOMAIN_PEER_DISC}),
     LockResult = lock(Backend, SelectedNode),
-    ?LOG_DEBUG(
+    ?LOG_INFO(
        "Peer discovery: rabbit_peer_discovery:lock/0 returned ~0tp",
        [LockResult],
        #{domain => ?RMQLOG_DOMAIN_PEER_DISC}),
     case LockResult of
         not_supported ->
-            ?LOG_DEBUG(
+            ?LOG_INFO(
                "Peer discovery: no lock acquired",
                #{domain => ?RMQLOG_DOMAIN_PEER_DISC}),
             join_selected_node_locked(SelectedNode, NodeType);
         {ok, Data} ->
-            ?LOG_DEBUG(
+            ?LOG_INFO(
                "Peer discovery: lock acquired",
                #{domain => ?RMQLOG_DOMAIN_PEER_DISC}),
             try
                 join_selected_node_locked(SelectedNode, NodeType)
             after
-                ?LOG_DEBUG(
+                ?LOG_INFO(
                    "Peer discovery: lock released",
                    #{domain => ?RMQLOG_DOMAIN_PEER_DISC}),
                 unlock(Backend, Data)
@@ -1011,14 +1011,14 @@ maybe_register() ->
     Backend = persistent_term:get(?PT_PEER_DISC_BACKEND, backend()),
     case Backend:supports_registration() of
         true ->
-            ?LOG_DEBUG(
+            ?LOG_INFO(
                "Peer discovery: registering this node",
                #{domain => ?RMQLOG_DOMAIN_PEER_DISC}),
             register(Backend),
             _ = Backend:post_registration(),
             ok;
         false ->
-            ?LOG_DEBUG(
+            ?LOG_INFO(
                "Peer discovery: registration unsupported, skipping register",
                #{domain => ?RMQLOG_DOMAIN_PEER_DISC}),
             ok
@@ -1030,12 +1030,12 @@ maybe_unregister() ->
     Backend = persistent_term:get(?PT_PEER_DISC_BACKEND),
     case Backend:supports_registration() of
         true ->
-            ?LOG_DEBUG(
+            ?LOG_INFO(
                "Peer discovery: unregistering this node",
                #{domain => ?RMQLOG_DOMAIN_PEER_DISC}),
             unregister(Backend);
         false ->
-            ?LOG_DEBUG(
+            ?LOG_INFO(
                "Peer discovery: registration unsupported, skipping unregister",
                #{domain => ?RMQLOG_DOMAIN_PEER_DISC}),
             ok

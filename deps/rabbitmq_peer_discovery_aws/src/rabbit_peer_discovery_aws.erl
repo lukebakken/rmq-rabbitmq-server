@@ -73,7 +73,7 @@
 %%
 
 init() ->
-    rabbit_log:debug("Peer discovery AWS: initialising..."),
+    rabbit_log:info("Peer discovery AWS: initialising..."),
     ok = application:ensure_started(inets),
     %% we cannot start this plugin yet since it depends on the rabbit app,
     %% which is in the process of being started by the time this function is called
@@ -86,14 +86,14 @@ init() ->
 list_nodes() ->
     M = ?CONFIG_MODULE:config_map(?BACKEND_CONFIG_KEY),
     {ok, _} = application:ensure_all_started(rabbitmq_aws),
-    rabbit_log:debug("Will use AWS access key of '~ts'", [get_config_key(aws_access_key, M)]),
+    rabbit_log:info("Will use AWS access key of '~ts'", [get_config_key(aws_access_key, M)]),
     ok = maybe_set_region(get_config_key(aws_ec2_region, M)),
     ok = maybe_set_credentials(get_config_key(aws_access_key, M),
                                get_config_key(aws_secret_key, M)),
     case get_config_key(aws_autoscaling, M) of
         true ->
             case rabbitmq_aws_config:instance_id() of
-                {ok, InstanceId} -> rabbit_log:debug("EC2 instance ID is determined from metadata service: ~tp", [InstanceId]),
+                {ok, InstanceId} -> rabbit_log:info("EC2 instance ID is determined from metadata service: ~tp", [InstanceId]),
                                     get_autoscaling_group_node_list(InstanceId, get_tags());
                 _                -> {error, "Failed to determine EC2 instance ID from metadata service"}
             end;
@@ -166,7 +166,7 @@ get_config_key(Key, Map) ->
 maybe_set_credentials("undefined", _) -> ok;
 maybe_set_credentials(_, "undefined") -> ok;
 maybe_set_credentials(AccessKey, SecretKey) ->
-    rabbit_log:debug("Setting AWS credentials, access key: '~ts'", [AccessKey]),
+    rabbit_log:info("Setting AWS credentials, access key: '~ts'", [AccessKey]),
     rabbitmq_aws:set_credentials(AccessKey, SecretKey).
 
 
@@ -180,7 +180,7 @@ maybe_set_region("undefined") ->
         {ok, Region} -> maybe_set_region(Region)
     end;
 maybe_set_region(Value) ->
-    rabbit_log:debug("Setting AWS region to ~tp", [Value]),
+    rabbit_log:info("Setting AWS region to ~tp", [Value]),
     rabbitmq_aws:set_region(Value).
 
 get_autoscaling_group_node_list(Instance, Tag) ->
@@ -188,16 +188,16 @@ get_autoscaling_group_node_list(Instance, Tag) ->
         {ok, Instances} ->
             case find_autoscaling_group(Instances, Instance) of
                 {ok, Group} ->
-                    rabbit_log:debug("Performing autoscaling group discovery, group: ~tp", [Group]),
+                    rabbit_log:info("Performing autoscaling group discovery, group: ~tp", [Group]),
                     Values = get_autoscaling_instances(Instances, Group, []),
-                    rabbit_log:debug("Performing autoscaling group discovery, found instances: ~tp", [Values]),
+                    rabbit_log:info("Performing autoscaling group discovery, found instances: ~tp", [Values]),
                     case get_hostname_by_instance_ids(Values, Tag) of
                         error ->
                             Msg = "Cannot discover any nodes: DescribeInstances API call failed",
                             rabbit_log:error(Msg),
                             {error, Msg};
                         Names ->
-                            rabbit_log:debug("Performing autoscaling group-based discovery, hostnames: ~tp", [Names]),
+                            rabbit_log:info("Performing autoscaling group-based discovery, hostnames: ~tp", [Names]),
                             {ok, {[?UTIL_MODULE:node_name(N) || N <- Names], disc}}
                     end;
                 error ->
