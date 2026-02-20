@@ -735,17 +735,25 @@ erpc_call(Node, Mod, Fun, Args, FromNode, Timeout) when Timeout >= 0 ->
 %% @private
 
 sort_nodes_and_props(NodesAndProps) ->
-    lists:sort(
-      fun(
-        {NodeA, MembersA, StartTimeA, _IsReadyA},
-        {NodeB, MembersB, StartTimeB, _IsReadyB}) ->
-              length(MembersA) > length(MembersB) orelse
-              (length(MembersA) =:= length(MembersB) andalso
-               StartTimeA < StartTimeB) orelse
-              (length(MembersA) =:= length(MembersB) andalso
-               StartTimeA =:= StartTimeB andalso
-               NodeA =< NodeB)
-      end, NodesAndProps).
+    NodesAndProps1 = lists:sort(
+                       fun(
+                         {NodeA, MembersA, StartTimeA, _IsReadyA},
+                         {NodeB, MembersB, StartTimeB, _IsReadyB}) ->
+                               length(MembersA) > length(MembersB) orelse
+                               (length(MembersA) =:= length(MembersB) andalso
+                                StartTimeA < StartTimeB) orelse
+                               (length(MembersA) =:= length(MembersB) andalso
+                                StartTimeA =:= StartTimeB andalso
+                                NodeA =< NodeB)
+                       end, NodesAndProps),
+    ?LOG_INFO(
+       lists:flatten(
+         ["Peer discovery: sorted list of nodes and their properties "
+          "considered to create/sync the cluster:"] ++
+         ["~n  - ~0tp" || _ <- NodesAndProps1]),
+       NodesAndProps1,
+       #{domain => ?RMQLOG_DOMAIN_PEER_DISC}),
+    NodesAndProps1.
 
 -spec can_use_discovered_nodes(DiscoveredNodes, NodesAndProps) -> CanUse when
       DiscoveredNodes :: [node()],
