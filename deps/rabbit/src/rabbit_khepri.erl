@@ -1511,10 +1511,8 @@ get_feature_state(Node) ->
 %% @private
 
 khepri_db_migration_enable(#{feature_name := FeatureName}) ->
-    case sync_cluster_membership_from_mnesia(FeatureName) of
-        ok    -> migrate_mnesia_tables(FeatureName);
-        Error -> Error
-    end.
+    %% Khepri is disabled in AMQ for RabbitMQ 3 to prevent upgrade path issues
+    {error, "Khepri is disabled in AMQ for RabbitMQ 3 due to lack of RabbitMQ 4 upgrade path"}.
 
 %% @private
 
