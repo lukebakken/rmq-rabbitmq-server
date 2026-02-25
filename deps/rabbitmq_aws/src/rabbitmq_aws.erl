@@ -267,6 +267,18 @@ endpoint_tld("cn-north-1") ->
     "amazonaws.com.cn";
 endpoint_tld("cn-northwest-1") ->
     "amazonaws.com.cn";
+endpoint_tld("us-iso-east-1") ->
+    "c2s.ic.gov";
+endpoint_tld("us-iso-west-1") ->
+    "c2s.ic.gov";
+endpoint_tld("us-isob-east-1") ->
+    "sc2s.sgov.gov";
+endpoint_tld("us-isof-east-1") ->
+    "csp.hci.ic.gov";
+endpoint_tld("us-isof-south-1") ->
+    "csp.hci.ic.gov";
+endpoint_tld("eusc-de-east-1") ->
+    "amazonaws.eu";
 endpoint_tld(_Other) ->
     "amazonaws.com".
 
