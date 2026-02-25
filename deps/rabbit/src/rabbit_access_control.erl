@@ -32,6 +32,14 @@ check_user_pass_login(Username, Password) ->
 check_user_login(Username, AuthProps) ->
     %% extra auth properties like MQTT client id are in AuthProps
     {ok, Modules} = application:get_env(rabbit, auth_backends),
+    check_user_login(Username, AuthProps, Modules).
+
+-spec check_user_login
+        (rabbit_types:username(), [{atom(), any()}], term()) ->
+            {'ok', rabbit_types:user()} |
+            {'refused', rabbit_types:username(), string(), [any()]}.
+
+check_user_login(Username, AuthProps, Modules) ->
     try
         lists:foldl(
             fun (rabbit_auth_backend_cache=ModN, {refused, _, _, _}) ->
