@@ -62,7 +62,7 @@
          send_credit_reply/3]).
 
 -spec is_enabled() -> boolean().
-is_enabled() -> true.
+is_enabled() -> application:get_env(rabbit, classic_queues_enabled, true).
 
 -spec is_compatible(boolean(), boolean(), boolean()) -> boolean().
 is_compatible(_, _, _) ->
