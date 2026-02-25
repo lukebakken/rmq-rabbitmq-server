@@ -24,30 +24,35 @@
 %% @doc Create the signed request headers
 %% end
 headers(Request) ->
-  RequestTimestamp = local_time(),
-  PayloadHash = sha256(Request#request.body),
-  URI = rabbitmq_aws_urilib:parse(Request#request.uri),
-  {_, Host, _} = URI#uri.authority,
-  Headers = append_headers(RequestTimestamp,
-                           length(Request#request.body),
-                           PayloadHash,
-                           Host,
-                           Request#request.security_token,
-                           Request#request.headers),
-  RequestHash = request_hash(Request#request.method,
-                             URI#uri.path,
-                             URI#uri.query,
-                             Headers,
-                             Request#request.body),
-  AuthValue = authorization(Request#request.access_key,
-                            Request#request.secret_access_key,
-                            RequestTimestamp,
-                            Request#request.region,
-                            Request#request.service,
-                            Headers,
-                            RequestHash),
-  sort_headers(lists:merge([{"authorization", AuthValue}], Headers)).
-
+    RequestTimestamp = local_time(),
+    PayloadHash = sha256(Request#request.body),
+    URI = rabbitmq_aws_urilib:parse(Request#request.uri),
+    {_, Host, _} = URI#uri.authority,
+    Headers = append_headers(
+        RequestTimestamp,
+        get_content_length(Request),
+        PayloadHash,
+        Host,
+        Request#request.security_token,
+        Request#request.headers
+    ),
+    RequestHash = request_hash(
+        Request#request.method,
+        URI#uri.path,
+        URI#uri.query,
+        Headers,
+        Request#request.body
+    ),
+    AuthValue = authorization(
+        Request#request.access_key,
+        Request#request.secret_access_key,
+        RequestTimestamp,
+        Request#request.region,
+        Request#request.service,
+        Headers,
+        RequestHash
+    ),
+    sort_headers(lists:merge([{"authorization", AuthValue}], Headers)).
 
 -spec amz_date(AMZTimestamp :: string()) -> string().
 %% @doc Extract the date from the AMZ timestamp format.
@@ -280,4 +285,10 @@ string_to_sign(RequestTimestamp, RequestDate, Region, Service, RequestHash) ->
 %% @doc Case-insensitive sorting of the request headers
 %% @end
 sort_headers(Headers) ->
-  lists:sort(fun({A,_}, {B, _}) -> string:to_lower(A) =< string:to_lower(B) end, Headers).
+    lists:sort(fun({A, _}, {B, _}) -> string:to_lower(A) =< string:to_lower(B) end, Headers).
+
+-spec get_content_length(Request :: #request{}) -> non_neg_integer().
+get_content_length(#request{body = Body}) when is_binary(Body) ->
+    byte_size(Body);
+get_content_length(#request{body = Body}) when is_list(Body) ->
+    length(Body).

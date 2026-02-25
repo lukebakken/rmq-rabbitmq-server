@@ -128,10 +128,12 @@ credentials() ->
 %%      will be returned.
 %% @end
 credentials(Profile) ->
-  lookup_credentials(Profile,
-                     os:getenv("AWS_ACCESS_KEY_ID"),
-                     os:getenv("AWS_SECRET_ACCESS_KEY")).
-
+    lookup_credentials(
+        Profile,
+        os:getenv("AWS_ACCESS_KEY_ID"),
+        os:getenv("AWS_SECRET_ACCESS_KEY"),
+        os:getenv("AWS_SESSION_TOKEN")
+    ).
 
 -spec region() -> {ok, string()}.
 %% @doc Return the region as configured by ``AWS_DEFAULT_REGION`` environment
@@ -437,41 +439,56 @@ imdsv2_token_url() ->
 instance_id_url() ->
   instance_metadata_url(string:join([?INSTANCE_METADATA_BASE, ?INSTANCE_ID], "/")).
 
-
--spec lookup_credentials(Profile :: string(),
-                         AccessKey :: string() | false,
-                         SecretKey :: string() | false)
-    -> security_credentials().
+-spec lookup_credentials(
+    Profile :: string(),
+    AccessKey :: string() | false,
+    SecretKey :: string() | false,
+    SessionToken :: string() | false
+) ->
+    security_credentials().
 %% @doc Return the access key and secret access key if they are set in
 %%      environment variables, otherwise lookup the credentials from the config
 %%      file for the specified profile.
 %% @end
-lookup_credentials(Profile, false, _) ->
-  lookup_credentials_from_config(Profile,
-                                 value(Profile, aws_access_key_id),
-                                 value(Profile, aws_secret_access_key));
-lookup_credentials(Profile, _, false) ->
-  lookup_credentials_from_config(Profile,
-                                 value(Profile, aws_access_key_id),
-                                 value(Profile, aws_secret_access_key));
-lookup_credentials(_, AccessKey, SecretKey) ->
-  {ok, AccessKey, SecretKey, undefined, undefined}.
+lookup_credentials(Profile, false, _, _) ->
+    lookup_credentials_from_config(
+        Profile,
+        value(Profile, aws_access_key_id),
+        value(Profile, aws_secret_access_key),
+        value(Profile, aws_session_token)
+    );
+lookup_credentials(Profile, _, false, _) ->
+    lookup_credentials_from_config(
+        Profile,
+        value(Profile, aws_access_key_id),
+        value(Profile, aws_secret_access_key),
+        value(Profile, aws_session_token)
+    );
+lookup_credentials(_, AccessKey, SecretKey, SessionToken) ->
+    case SessionToken of
+        false -> {ok, AccessKey, SecretKey, undefined, undefined};
+        SessionToken -> {ok, AccessKey, SecretKey, undefined, SessionToken}
+    end.
 
-
--spec lookup_credentials_from_config(Profile :: string(),
-                                     access_key() | {error, Reason :: atom()},
-                                     secret_access_key()| {error, Reason :: atom()})
-    -> security_credentials().
+-spec lookup_credentials_from_config(
+    Profile :: string(),
+    access_key() | {error, Reason :: atom()},
+    secret_access_key() | {error, Reason :: atom()},
+    security_token() | {error, Reason :: atom()}
+) ->
+    security_credentials().
 %% @doc Return the access key and secret access key if they are set in
 %%      for the specified profile in the config file, if it exists. If it does
 %%      not exist or the profile is not set or the values are not set in the
 %%      profile, look up the values in the shared credentials file
 %% @end
-lookup_credentials_from_config(Profile, {error,_}, _) ->
-  lookup_credentials_from_file(Profile, credentials_file_data());
-lookup_credentials_from_config(_, AccessKey, SecretKey) ->
-  {ok, AccessKey, SecretKey, undefined, undefined}.
-
+lookup_credentials_from_config(Profile, {error, _}, _, _) ->
+    lookup_credentials_from_file(Profile, credentials_file_data());
+lookup_credentials_from_config(_, AccessKey, SecretKey, SessionToken) ->
+    case SessionToken of
+        {error, _} -> {ok, AccessKey, SecretKey, undefined, undefined};
+        SessionToken -> {ok, AccessKey, SecretKey, undefined, SessionToken}
+    end.
 
 -spec lookup_credentials_from_file(Profile :: string(),
                                    Credentials :: list())
@@ -498,24 +515,26 @@ lookup_credentials_from_file(Profile, Credentials) ->
 lookup_credentials_from_section(undefined) ->
   lookup_credentials_from_instance_metadata();
 lookup_credentials_from_section(Credentials) ->
-  AccessKey = proplists:get_value(aws_access_key_id, Credentials, undefined),
-  SecretKey = proplists:get_value(aws_secret_access_key, Credentials, undefined),
-  lookup_credentials_from_proplist(AccessKey, SecretKey).
+    AccessKey = proplists:get_value(aws_access_key_id, Credentials, undefined),
+    SecretKey = proplists:get_value(aws_secret_access_key, Credentials, undefined),
+    SessionToken = proplists:get_value(aws_session_token, Credentials, undefined),
+    lookup_credentials_from_proplist(AccessKey, SecretKey, SessionToken).
 
-
--spec lookup_credentials_from_proplist(AccessKey :: access_key(),
-                                       SecretAccessKey :: secret_access_key())
-    -> security_credentials().
+-spec lookup_credentials_from_proplist(
+    AccessKey :: access_key(),
+    SecretAccessKey :: secret_access_key(),
+    SessionToken :: security_token()
+) ->
+    security_credentials().
 %% @doc Process the contents of the Credentials proplists checking if the
 %%      access key and secret access key are both set.
 %% @end
-lookup_credentials_from_proplist(undefined, _) ->
-  lookup_credentials_from_instance_metadata();
-lookup_credentials_from_proplist(_, undefined) ->
-  lookup_credentials_from_instance_metadata();
-lookup_credentials_from_proplist(AccessKey, SecretKey) ->
-  {ok, AccessKey, SecretKey, undefined, undefined}.
-
+lookup_credentials_from_proplist(undefined, _, _) ->
+    lookup_credentials_from_instance_metadata();
+lookup_credentials_from_proplist(_, undefined, _) ->
+    lookup_credentials_from_instance_metadata();
+lookup_credentials_from_proplist(AccessKey, SecretKey, SessionToken) ->
+    {ok, AccessKey, SecretKey, undefined, SessionToken}.
 
 -spec lookup_credentials_from_instance_metadata()
     -> security_credentials().
@@ -738,12 +757,14 @@ load_imdsv2_token() ->
 %% @doc Return headers used for instance metadata service requests.
 %% @end
 instance_metadata_request_headers() ->
-  case application:get_env(rabbit, aws_prefer_imdsv2) of
-    {ok, false} -> [];
-    _           -> %% undefined or {ok, true}
-                   rabbit_log:debug("EC2 Instance Metadata Service v2 (IMDSv2) is preferred."),
-                   maybe_imdsv2_token_headers()
-  end.
+    case application:get_env(rabbitmq_aws, aws_prefer_imdsv2) of
+        {ok, false} ->
+            [];
+        %% undefined or {ok, true}
+        _ ->
+            rabbit_log:debug("EC2 Instance Metadata Service v2 (IMDSv2) is preferred."),
+            maybe_imdsv2_token_headers()
+    end.
 
 -spec maybe_imdsv2_token_headers() -> headers().
 %% @doc Construct http request headers from Imdsv2Token to use with GET requests submitted to the EC2 Instance Metadata Service.

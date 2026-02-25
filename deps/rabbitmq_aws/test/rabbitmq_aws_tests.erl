@@ -5,42 +5,46 @@
 -include("rabbitmq_aws.hrl").
 
 init_test_() ->
-  {foreach,
-    fun() ->
-      os:putenv("AWS_DEFAULT_REGION", "us-west-3"),
-      meck:new(rabbitmq_aws_config, [passthrough])
-    end,
-    fun(_) ->
-      os:unsetenv("AWS_DEFAULT_REGION"),
-      meck:unload(rabbitmq_aws_config)
-    end,
-    [
-      {"ok", fun() ->
-        os:putenv("AWS_ACCESS_KEY_ID", "Sésame"),
-        os:putenv("AWS_SECRET_ACCESS_KEY", "ouvre-toi"),
-        {ok, Pid} = rabbitmq_aws:start_link(),
-        rabbitmq_aws:set_region("us-west-3"),
-        rabbitmq_aws:refresh_credentials(),
-        {ok, State} = gen_server:call(Pid, get_state),
-        ok = gen_server:stop(Pid),
-        os:unsetenv("AWS_ACCESS_KEY_ID"),
-        os:unsetenv("AWS_SECRET_ACCESS_KEY"),
-        Expectation = {state,"Sésame","ouvre-toi",undefined,undefined,"us-west-3", undefined,undefined},
-        ?assertEqual(Expectation, State)
-       end},
-      {"error", fun() ->
-        meck:expect(rabbitmq_aws_config, credentials, fun() -> {error, test_result} end),
-        {ok, Pid} = rabbitmq_aws:start_link(),
-        rabbitmq_aws:set_region("us-west-3"),
-        rabbitmq_aws:refresh_credentials(),
-        {ok, State} = gen_server:call(Pid, get_state),
-        ok = gen_server:stop(Pid),
-        Expectation = {state,undefined,undefined,undefined,undefined,"us-west-3",undefined,test_result},
-        ?assertEqual(Expectation, State),
-        meck:validate(rabbitmq_aws_config)
-       end}
-    ]
-  }.
+    {foreach,
+        fun() ->
+            os:putenv("AWS_DEFAULT_REGION", "us-west-3"),
+            meck:new(rabbitmq_aws_config, [passthrough])
+        end,
+        fun(_) ->
+            os:unsetenv("AWS_DEFAULT_REGION"),
+            meck:unload(rabbitmq_aws_config)
+        end,
+        [
+            {"ok", fun() ->
+                os:unsetenv("AWS_SESSION_TOKEN"),
+                os:putenv("AWS_ACCESS_KEY_ID", "Sésame"),
+                os:putenv("AWS_SECRET_ACCESS_KEY", "ouvre-toi"),
+                {ok, Pid} = rabbitmq_aws:start_link(),
+                rabbitmq_aws:set_region("us-west-3"),
+                rabbitmq_aws:refresh_credentials(),
+                {ok, State} = gen_server:call(Pid, get_state),
+                ok = gen_server:stop(Pid),
+                os:unsetenv("AWS_ACCESS_KEY_ID"),
+                os:unsetenv("AWS_SECRET_ACCESS_KEY"),
+                Expectation =
+                    {state, "Sésame", "ouvre-toi", undefined, undefined, "us-west-3", undefined,
+                        undefined},
+                ?assertEqual(Expectation, State)
+            end},
+            {"error", fun() ->
+                meck:expect(rabbitmq_aws_config, credentials, fun() -> {error, test_result} end),
+                {ok, Pid} = rabbitmq_aws:start_link(),
+                rabbitmq_aws:set_region("us-west-3"),
+                rabbitmq_aws:refresh_credentials(),
+                {ok, State} = gen_server:call(Pid, get_state),
+                ok = gen_server:stop(Pid),
+                Expectation =
+                    {state, undefined, undefined, undefined, undefined, "us-west-3", undefined,
+                        test_result},
+                ?assertEqual(Expectation, State),
+                meck:validate(rabbitmq_aws_config)
+            end}
+        ]}.
 
 terminate_test() ->
   ?assertEqual(ok, rabbitmq_aws:terminate(foo, bar)).
@@ -455,65 +459,95 @@ api_get_request_test_() ->
     [
       {"AWS service API request succeeded",
         fun() ->
-          State = #state{access_key = "ExpiredKey",
-                         secret_access_key = "ExpiredAccessKey",
-                         region = "us-east-1",
-                         expiration = {{3016, 4, 1}, {12, 0, 0}}},
-          meck:expect(httpc, request, 4, {ok, {{"HTTP/1.0", 200, "OK"}, [{"content-type", "application/json"}], "{\"data\": \"value\"}"}}),
-          {ok, Pid} = rabbitmq_aws:start_link(),
-          rabbitmq_aws:set_region("us-east-1"),
-          rabbitmq_aws:set_credentials(State),
-          Result = rabbitmq_aws:api_get_request("AWS", "API"),
-          ok = gen_server:stop(Pid),
-          ?assertEqual({ok, [{"data","value"}]}, Result),
-          meck:validate(httpc)
-        end
-      },
-      {"AWS service API request failed - credentials",
-        fun() ->
-          meck:expect(rabbitmq_aws_config, credentials, 0, {error, undefined}),
-          {ok, Pid} = rabbitmq_aws:start_link(),
-          rabbitmq_aws:set_region("us-east-1"),
-          Result = rabbitmq_aws:api_get_request("AWS", "API"),
-          ok = gen_server:stop(Pid),
-          ?assertEqual({error, credentials}, Result)
-        end
-      },
-      {"AWS service API request failed - API error with persistent failure",
-        fun() ->
-          State = #state{access_key = "ExpiredKey",
-                         secret_access_key = "ExpiredAccessKey",
-                         region = "us-east-1",
-                         expiration = {{3016, 4, 1}, {12, 0, 0}}},
-          meck:expect(httpc, request, 4, {error, "network error"}),
-          {ok, Pid} = rabbitmq_aws:start_link(),
-          rabbitmq_aws:set_region("us-east-1"),
-          rabbitmq_aws:set_credentials(State),
-          Result = rabbitmq_aws:api_get_request_with_retries("AWS", "API", 3, 1),
-          ok = gen_server:stop(Pid),
-          ?assertEqual({error, "AWS service is unavailable"}, Result),
-          meck:validate(httpc)
-        end
-      },
-      {"AWS service API request succeeded after a transient error",
-        fun() ->
-          State = #state{access_key = "ExpiredKey",
-                         secret_access_key = "ExpiredAccessKey",
-                         region = "us-east-1",
-                         expiration = {{3016, 4, 1}, {12, 0, 0}}},
-          meck:expect(httpc, request, 4, meck:seq([
-              {error, "network error"},
-              {ok, {{"HTTP/1.0", 500, "OK"}, [{"content-type", "application/json"}], "{\"error\": \"server error\"}"}},
-              {ok, {{"HTTP/1.0", 200, "OK"}, [{"content-type", "application/json"}], "{\"data\": \"value\"}"}}
-          ])),
-          {ok, Pid} = rabbitmq_aws:start_link(),
-          rabbitmq_aws:set_region("us-east-1"),
-          rabbitmq_aws:set_credentials(State),
-          Result = rabbitmq_aws:api_get_request_with_retries("AWS", "API", 3, 1),
-          ok = gen_server:stop(Pid),
-          ?assertEqual({ok, [{"data","value"}]}, Result),
-          meck:validate(httpc)
-        end
+            meck:new(httpc, []),
+            meck:new(rabbitmq_aws_config, []),
+            [httpc, rabbitmq_aws_config]
+        end,
+        fun meck:unload/1,
+        [
+            {"AWS service API request succeeded", fun() ->
+                State = #state{
+                    access_key = "ExpiredKey",
+                    secret_access_key = "ExpiredAccessKey",
+                    region = "us-east-1",
+                    expiration = {{3016, 4, 1}, {12, 0, 0}}
+                },
+                meck:expect(
+                    httpc,
+                    request,
+                    4,
+                    {ok, {
+                        {"HTTP/1.0", 200, "OK"},
+                        [{"content-type", "application/json"}],
+                        "{\"data\": \"value\"}"
+                    }}
+                ),
+                {ok, Pid} = rabbitmq_aws:start_link(),
+                rabbitmq_aws:set_region("us-east-1"),
+                rabbitmq_aws:set_credentials(State),
+                Result = rabbitmq_aws:api_get_request("AWS", "API"),
+                ok = gen_server:stop(Pid),
+                ?assertEqual({ok, [{"data", "value"}]}, Result),
+                meck:validate(httpc)
+            end},
+            {"AWS service API request failed - credentials", fun() ->
+                meck:expect(rabbitmq_aws_config, credentials, 0, {error, undefined}),
+                {ok, Pid} = rabbitmq_aws:start_link(),
+                rabbitmq_aws:set_region("us-east-1"),
+                Result = rabbitmq_aws:api_get_request("AWS", "API"),
+                ok = gen_server:stop(Pid),
+                ?assertEqual({error, credentials}, Result)
+            end},
+            {"AWS service API request failed - API error with persistent failure", fun() ->
+                State = #state{
+                    access_key = "ExpiredKey",
+                    secret_access_key = "ExpiredAccessKey",
+                    region = "us-east-1",
+                    expiration = {{3016, 4, 1}, {12, 0, 0}}
+                },
+                meck:expect(httpc, request, 4, {error, "network error"}),
+                {ok, Pid} = rabbitmq_aws:start_link(),
+                rabbitmq_aws:set_region("us-east-1"),
+                rabbitmq_aws:set_credentials(State),
+                Result = rabbitmq_aws:api_request_with_retries("AWS", get, "API", "", [], 3, 1),
+                ok = gen_server:stop(Pid),
+                ?assertEqual({error, "AWS service is unavailable"}, Result),
+                meck:validate(httpc)
+            end},
+            {"AWS service API request succeeded after a transient error", fun() ->
+                State = #state{
+                    access_key = "ExpiredKey",
+                    secret_access_key = "ExpiredAccessKey",
+                    region = "us-east-1",
+                    expiration = {{3016, 4, 1}, {12, 0, 0}}
+                },
+                meck:expect(
+                    httpc,
+                    request,
+                    4,
+                    meck:seq([
+                        {error, "network error"},
+                        {ok, {
+                            {"HTTP/1.0", 500, "OK"},
+                            [{"content-type", "application/json"}],
+                            "{\"error\": \"server error\"}"
+                        }},
+                        {ok, {
+                            {"HTTP/1.0", 200, "OK"},
+                            [{"content-type", "application/json"}],
+                            "{\"data\": \"value\"}"
+                        }}
+                    ])
+                ),
+                {ok, Pid} = rabbitmq_aws:start_link(),
+                rabbitmq_aws:set_region("us-east-1"),
+                rabbitmq_aws:set_credentials(State),
+                Result = rabbitmq_aws:api_request_with_retries("AWS", get, "API", "", [], 3, 1),
+                ok = gen_server:stop(Pid),
+                ?assertEqual({ok, [{"data", "value"}]}, Result),
+                meck:validate(httpc)
+            end}
+        ]
       }
     ]
   }.
