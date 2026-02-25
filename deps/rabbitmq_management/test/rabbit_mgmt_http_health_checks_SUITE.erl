@@ -46,7 +46,10 @@ all_tests() -> [
                 virtual_hosts_test,
                 protocol_listener_test,
                 port_listener_test,
-                certificate_expiration_test
+                certificate_expiration_test,
+                is_in_service_test,
+                below_node_connection_limit_test,
+                ready_to_serve_clients_test
                ].
 
 %% -------------------------------------------------------------------
@@ -330,7 +333,7 @@ protocol_listener_test(Config) ->
     Body0 = http_get_failed(Config, "/health/checks/protocol-listener/mqtt"),
     ?assertEqual(<<"failed">>, maps:get(<<"status">>, Body0)),
     ?assertEqual(true, maps:is_key(<<"reason">>, Body0)),
-    ?assertEqual(<<"mqtt">>, maps:get(<<"missing">>, Body0)),
+    ?assertEqual([<<"mqtt">>], maps:get(<<"missing">>, Body0)),
     ?assert(lists:member(<<"http">>, maps:get(<<"protocols">>, Body0))),
     ?assert(lists:member(<<"clustering">>, maps:get(<<"protocols">>, Body0))),
     ?assert(lists:member(<<"amqp">>, maps:get(<<"protocols">>, Body0))),
@@ -339,6 +342,14 @@ protocol_listener_test(Config) ->
     http_get_failed(Config, "/health/checks/protocol-listener/mqtts"),
     http_get_failed(Config, "/health/checks/protocol-listener/stomp"),
     http_get_failed(Config, "/health/checks/protocol-listener/stomp1.0"),
+
+    %% Multiple protocols may be supplied. The health check only returns OK if
+    %% all requested protocols are available.
+    Body1 = http_get_failed(Config, "/health/checks/protocol-listener/amqp,mqtt"),
+    ?assertEqual(<<"failed">>, maps:get(<<"status">>, Body1)),
+    ?assertEqual(true, maps:is_key(<<"reason">>, Body1)),
+    ?assert(lists:member(<<"mqtt">>, maps:get(<<"missing">>, Body1))),
+    ?assert(lists:member(<<"amqp">>, maps:get(<<"protocols">>, Body1))),
 
     passed.
 
@@ -395,8 +406,74 @@ certificate_expiration_test(Config) ->
 
     passed.
 
+is_in_service_test(Config) ->
+    Path = "/health/checks/is-in-service",
+    Check0 = http_get(Config, Path, ?OK),
+    ?assertEqual(<<"ok">>, maps:get(status, Check0)),
+
+    true = rabbit_ct_broker_helpers:mark_as_being_drained(Config, 0),
+    Body0 = http_get_failed(Config, Path),
+    ?assertEqual(<<"failed">>, maps:get(<<"status">>, Body0)),
+    true = rabbit_ct_broker_helpers:unmark_as_being_drained(Config, 0),
+
+    passed.
+
+below_node_connection_limit_test(Config) ->
+    Path = "/health/checks/below-node-connection-limit",
+    Check0 = http_get(Config, Path, ?OK),
+    ?assertEqual(<<"ok">>, maps:get(status, Check0)),
+
+    %% Set the connection limit low and open 'limit' connections.
+    rabbit_ct_client_helpers:close_channels_and_connection(Config, 0),
+    Limit = 10,
+    rabbit_ct_broker_helpers:rpc(
+      Config, 0, application, set_env, [rabbit, connection_max, Limit]),
+    Connections = [rabbit_ct_client_helpers:open_unmanaged_connection(Config, 0) || _ <- lists:seq(1, Limit)],
+    true = lists:all(fun(E) -> is_pid(E) end, Connections),
+    {error, not_allowed} = rabbit_ct_client_helpers:open_unmanaged_connection(Config, 0),
+
+    Body0 = http_get_failed(Config, Path),
+    ?assertEqual(<<"failed">>, maps:get(<<"status">>, Body0)),
+
+    %% Clean up the connections and reset the limit.
+    [catch rabbit_ct_client_helpers:close_connection(C) || C <- Connections],
+    rabbit_ct_broker_helpers:rpc(
+      Config, 0, application, set_env, [rabbit, connection_max, infinity]),
+
+    passed.
+
+ready_to_serve_clients_test(Config) ->
+    Path = "/health/checks/ready-to-serve-clients",
+    Check0 = http_get(Config, Path, ?OK),
+    ?assertEqual(<<"ok">>, maps:get(status, Check0)),
+
+    true = rabbit_ct_broker_helpers:mark_as_being_drained(Config, 0),
+    Body0 = http_get_failed(Config, Path),
+    ?assertEqual(<<"failed">>, maps:get(<<"status">>, Body0)),
+    true = rabbit_ct_broker_helpers:unmark_as_being_drained(Config, 0),
+
+    %% Set the connection limit low and open 'limit' connections.
+    rabbit_ct_client_helpers:close_channels_and_connection(Config, 0),
+    Limit = 10,
+    rabbit_ct_broker_helpers:rpc(
+      Config, 0, application, set_env, [rabbit, connection_max, Limit]),
+    Connections = [rabbit_ct_client_helpers:open_unmanaged_connection(Config, 0) || _ <- lists:seq(1, Limit)],
+    true = lists:all(fun(E) -> is_pid(E) end, Connections),
+    {error, not_allowed} = rabbit_ct_client_helpers:open_unmanaged_connection(Config, 0),
+
+    Body1 = http_get_failed(Config, Path),
+    ?assertEqual(<<"failed">>, maps:get(<<"status">>, Body1)),
+
+    %% Clean up the connections and reset the limit.
+    [catch rabbit_ct_client_helpers:close_connection(C) || C <- Connections],
+    rabbit_ct_broker_helpers:rpc(
+      Config, 0, application, set_env, [rabbit, connection_max, infinity]),
+
+    passed.
+
 http_get_failed(Config, Path) ->
     {ok, {{_, Code, _}, _, ResBody}} = req(Config, get, Path, [auth_header("guest", "guest")]),
+    ct:pal("GET ~s: ~w ~w", [Path, Code, ResBody]),
     ?assertEqual(Code, ?HEALTH_CHECK_FAILURE_STATUS),
     rabbit_json:decode(rabbit_data_coercion:to_binary(ResBody)).
 
