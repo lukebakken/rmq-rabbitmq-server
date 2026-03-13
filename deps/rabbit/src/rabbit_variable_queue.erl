@@ -2733,6 +2733,8 @@ maybe_deltas_to_betas(DelsAndAcksFun,
                                ram_bytes         = RamBytes      + RamBytesInc,
                                disk_read_count   = DiskReadCount + RamCountsInc },
     case ?QUEUE:len(Q3a) of
+        0 when DeltaSeqId1 >= DeltaSeqIdEnd ->
+            State2 #vqstate { delta = ?BLANK_DELTA };
         0 ->
             %% we ignored every message in the segment due to it being
             %% transient and below the threshold
