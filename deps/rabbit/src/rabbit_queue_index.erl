@@ -13,7 +13,7 @@
          terminate/3, delete_and_terminate/1, info/1,
          pre_publish/7, flush_pre_publish_cache/2,
          publish/7, publish/8, deliver/2, ack/2, sync/1, needs_sync/1, flush/1,
-         read/3, next_segment_boundary/1, bounds/1, start/2, stop/1]).
+         read/3, next_segment_boundary/1, bounds/1, bounds/2, start/2, stop/1]).
 
 %% Used by rabbit_vhost to set the segment_entry_count.
 -export([all_queue_directory_names/1]).
@@ -511,8 +511,13 @@ next_segment_boundary(SeqId) ->
 
 -spec bounds(qistate()) ->
                        {non_neg_integer(), non_neg_integer(), qistate()}.
+-spec bounds(qistate(), non_neg_integer() | undefined) ->
+                       {non_neg_integer(), non_neg_integer(), qistate()}.
 
-bounds(State = #qistate { segments = Segments }) ->
+bounds(State) ->
+    bounds(State, undefined).
+
+bounds(State = #qistate { segments = Segments }, NextSeqIdHint) ->
     %% This is not particularly efficient, but only gets invoked on
     %% queue initialisation.
     SegNums = lists:sort(segment_nums(Segments)),
@@ -528,7 +533,10 @@ bounds(State = #qistate { segments = Segments }) ->
     %% SegNums is sorted, ascending.
     {LowSeqId, NextSeqId} =
         case SegNums of
-            []         -> {0, 0};
+            []         -> case NextSeqIdHint of
+                              undefined -> {0, 0};
+                              Hint      -> {Hint, Hint}
+                          end;
             [MinSeg|_] -> {reconstruct_seq_id(MinSeg, 0),
                            reconstruct_seq_id(1 + lists:last(SegNums), 0)}
         end,
@@ -725,7 +733,7 @@ recover_index_v2_common(State0 = #qistate { queue_name = Name, dir = Dir },
     %% Use a temporary per-queue store state to read embedded messages.
     StoreState0 = rabbit_classic_queue_store_v2:init(Name),
     %% Go through the v2 index and publish messages to v1 index.
-    {LoSeqId, HiSeqId, _} = rabbit_classic_queue_index_v2:bounds(V2State),
+    {LoSeqId, HiSeqId, _} = rabbit_classic_queue_index_v2:bounds(V2State, undefined),
     %% When resuming after a crash we need to double check the messages that are both
     %% in the v1 and v2 index (effectively the messages below the upper bound of the
     %% v1 index that are about to be written to it).

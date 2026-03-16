@@ -1049,7 +1049,7 @@ convert_from_v2_to_v1(State0 = #vqstate{ index_mod   = rabbit_classic_queue_inde
     %% We may have read from the per-queue store state and opened FDs.
     #vqstate{ store_state = V2Store0 } = State,
     V1Index0 = rabbit_queue_index:init_for_conversion(QueueName, MsgIdxOnDiskFun, MsgAndIdxOnDiskFun),
-    {LoSeqId, HiSeqId, _} = rabbit_classic_queue_index_v2:bounds(V2Index),
+    {LoSeqId, HiSeqId, _} = rabbit_classic_queue_index_v2:bounds(V2Index, undefined),
     CountersRef = counters:new(?CONVERT_COUNTER_SIZE, []),
     {V1Index, V2Store} = convert_from_v2_to_v1_loop(QueueName, V1Index0, V2Index, V2Store0,
                                                     {CountersRef, ?CONVERT_COUNT, ?CONVERT_BYTES},
@@ -1473,12 +1473,7 @@ init(QueueVsn, IsDurable, IndexMod, IndexState, StoreState, DeltaCount, DeltaByt
                         _ -> proplists:get_value(next_seq_id, Terms)
                     end,
 
-    {LowSeqId, HiSeqId, IndexState1} = case IndexMod of
-                                           rabbit_classic_queue_index_v2 ->
-                                               rabbit_classic_queue_index_v2:bounds(IndexState, NextSeqIdHint);
-                                           _ ->
-                                               IndexMod:bounds(IndexState)
-                                       end,
+    {LowSeqId, HiSeqId, IndexState1} = IndexMod:bounds(IndexState, NextSeqIdHint),
 
     {NextSeqId, NextDeliverSeqId, DeltaCount1, DeltaBytes1} =
         case Terms of
