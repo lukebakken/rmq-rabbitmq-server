@@ -9,7 +9,7 @@
 
 -include_lib("rabbit_common/include/rabbit.hrl").
 
--export([check_user_pass_login/2, check_user_login/2, check_user_loopback/2,
+-export([check_user_pass_login/2, check_user_login/2, check_user_login/3, check_user_loopback/2,
          check_vhost_access/4, check_resource_access/4, check_topic_access/4]).
 
 -export([permission_cache_can_expire/1, update_state/2, expiry_timestamp/1]).
