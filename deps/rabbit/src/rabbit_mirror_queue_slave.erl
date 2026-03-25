@@ -908,10 +908,15 @@ maybe_enqueue_message(
         error ->
             {MQ, PendingCh, ChState} = get_sender_queue(ChPid, SQ),
             MQ1 = queue:in(Delivery, MQ),
-            rabbit_log:debug(
-                "@@@@ ~ts:~ts enqueued "
-                "self=~p node=~p msgid=~p ch=~p ch_node=~p mq_len=~w",
-                [?MODULE, ?FUNCTION_NAME, self(), node(), MsgId, ChPid, node(ChPid), queue:len(MQ1)]),
+            MQLen = queue:len(MQ1),
+            case MQLen =:= 1 orelse MQLen rem 500 =:= 0 of
+                true ->
+                    rabbit_log:debug(
+                        "@@@@ ~ts:~ts enqueued "
+                        "self=~p node=~p ch=~p ch_node=~p mq_len=~w",
+                        [?MODULE, ?FUNCTION_NAME, self(), node(), ChPid, node(ChPid), MQLen]);
+                false -> ok
+            end,
             SQ1 = maps:put(ChPid, {MQ1, PendingCh, ChState}, SQ),
             State1 #state { sender_queues = SQ1 };
         {ok, Status} ->
