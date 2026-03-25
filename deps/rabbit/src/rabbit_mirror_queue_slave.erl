@@ -908,6 +908,10 @@ maybe_enqueue_message(
         error ->
             {MQ, PendingCh, ChState} = get_sender_queue(ChPid, SQ),
             MQ1 = queue:in(Delivery, MQ),
+            rabbit_log:debug(
+                "@@@@ ~ts:~ts enqueued "
+                "self=~p node=~p msgid=~p ch=~p ch_node=~p mq_len=~w",
+                [?MODULE, ?FUNCTION_NAME, self(), node(), MsgId, ChPid, node(ChPid), queue:len(MQ1)]),
             SQ1 = maps:put(ChPid, {MQ1, PendingCh, ChState}, SQ),
             State1 #state { sender_queues = SQ1 };
         {ok, Status} ->
@@ -955,12 +959,16 @@ publish_or_discard(Status, ChPid, MsgId,
                          %% We received the msg from the channel first. Thus
                          %% we need to deal with confirms here.
                          send_or_record_confirm(Status, Delivery, MS, State1)};
-                    _ ->
+                    HeadMsgId ->
                         %% The instruction was sent to us before we were
                         %% within the slave_pids within the #amqqueue{}
                         %% record. We'll never receive the message directly
                         %% from the channel. And the channel will not be
                         %% expecting any confirms from us.
+                        rabbit_log:debug(
+                            "@@@@ ~ts:~ts publish_or_discard mismatch: "
+                            "self=~p node=~p gm_msgid=~p head_msgid=~p ch=~p ch_node=~p mq_len=~w",
+                            [?MODULE, ?FUNCTION_NAME, self(), node(), MsgId, HeadMsgId, ChPid, node(ChPid), queue:len(MQ)]),
                         {MQ, PendingCh, MS}
                 end
         end,
