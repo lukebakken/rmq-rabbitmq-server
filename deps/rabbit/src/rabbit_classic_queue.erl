@@ -384,17 +384,7 @@ deliver(Qs0, Msg0, Options) ->
         %% dictionary.
         flow ->
             _ = [credit_flow:send(QPid) || QPid <- MPids],
-            _ = [begin
-                     WasFree = not credit_flow:blocked(),
-                     credit_flow:send(QPid),
-                     case WasFree andalso credit_flow:blocked() of
-                         true ->
-                             rabbit_log:debug(
-                                 "@@@@ rabbit_classic_queue:deliver channel=~p blocked by slave=~p",
-                                 [self(), QPid]);
-                         false -> ok
-                     end
-                 end || QPid <- SPids],
+            _ = [credit_flow:send(QPid) || QPid <- SPids],
             ok;
         noflow -> ok
     end,

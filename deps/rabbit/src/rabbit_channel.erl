@@ -755,16 +755,7 @@ handle_info({bump_credit, Msg}, State) ->
     %% unblocked. This means that any credit that was deferred will be
     %% sent to rabbit_reader processs that might be blocked by this
     %% particular channel.
-    WasBlocked = credit_flow:blocked(),
     credit_flow:handle_bump_msg(Msg),
-    case WasBlocked andalso not credit_flow:blocked() of
-        true ->
-            {From, _} = Msg,
-            rabbit_log:debug(
-                "@@@@ rabbit_channel:handle_info channel=~p unblocked by ~p",
-                [self(), From]);
-        false -> ok
-    end,
     noreply(State);
 
 handle_info(timeout, State) ->

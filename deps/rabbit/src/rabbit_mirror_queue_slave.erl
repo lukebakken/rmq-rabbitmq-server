@@ -350,13 +350,6 @@ handle_cast({run_backing_queue, Mod, Fun}, State) ->
     noreply(run_backing_queue(Mod, Fun, State));
 
 handle_cast({gm, Instruction}, State = #state{q = Q0}) when ?is_amqqueue(Q0) ->
-    case process_info(self(), message_queue_len) of
-        {message_queue_len, N} when N > 500, N rem 500 =:= 0 ->
-            rabbit_log:debug(
-                "@@@@ ~ts:handle_cast gm backlog: self=~p node=~p mql=~w",
-                [?MODULE, self(), node(), N]);
-        _ -> ok
-    end,
     QName = amqqueue:get_name(Q0),
     case rabbit_amqqueue:lookup(QName) of
        {ok, Q1} when ?is_amqqueue(Q1) ->
@@ -382,13 +375,7 @@ handle_cast({deliver, Delivery = #delivery{sender = Sender, flow = Flow}, true},
     %% rabbit_amqqueue_process:handle_ch_down for more info.
     %% If message is rejected by the master, the publish will be nacked
     %% even if mirrors confirm it. No need to check for length here.
-    %%
-    %% Flow control ack is deferred until the corresponding gm instruction
-    %% is processed (in publish_or_discard or maybe_enqueue_message), so
-    %% that the channel is throttled by the gm round-trip rather than
-    %% sending direct deliveries unboundedly ahead of gm.
-    _ = Sender,
-    _ = Flow,
+    maybe_flow_ack(Sender, Flow),
     noreply(maybe_enqueue_message(Delivery, State));
 
 handle_cast({sync_start, Ref, Syncer},
@@ -933,7 +920,6 @@ maybe_enqueue_message(
             SQ1 = maps:put(ChPid, {MQ1, PendingCh, ChState}, SQ),
             State1 #state { sender_queues = SQ1 };
         {ok, Status} ->
-            maybe_flow_ack(ChPid, Delivery#delivery.flow),
             MS1 = send_or_record_confirm(
                     Status, Delivery, maps:remove(MsgId, MS), State1),
             SQ1 = remove_from_pending_ch(MsgId, ChPid, SQ),
@@ -974,7 +960,6 @@ publish_or_discard(Status, ChPid, MsgId,
                        message = Msg }}, MQ2} ->
                 case mc:get_annotation(id, Msg) of
                     MsgId ->
-                        maybe_flow_ack(Delivery#delivery.sender, Delivery#delivery.flow),
                         {MQ2, PendingCh,
                          %% We received the msg from the channel first. Thus
                          %% we need to deal with confirms here.
