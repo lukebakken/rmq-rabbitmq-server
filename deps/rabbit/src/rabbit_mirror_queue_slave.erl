@@ -964,8 +964,13 @@ publish_or_discard(Status, ChPid, MsgId,
                         {MQ, PendingCh, MS}
                 end
         end,
-    SQ1 = maps:put(ChPid, {MQ1, PendingCh1, ChState}, SQ),
-    State1 #state { sender_queues = SQ1, msg_id_status = MS1 }.
+        SQ1 = maps:put(ChPid, {MQ1, PendingCh1, ChState}, SQ),
+        %% Clean up if queue is empty and no pending messages
+        SQ2 = case {queue:is_empty(MQ1), sets:size(PendingCh1)} of
+                  {true, 0} -> maps:remove(ChPid, SQ1);
+                  _         -> SQ1
+              end,
+        State1#state{sender_queues = SQ2, msg_id_status = MS1}.
 
 
 process_instruction({publish, ChPid, Flow, MsgProps, Msg}, State) ->
